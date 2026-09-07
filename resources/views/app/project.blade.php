@@ -21,7 +21,9 @@
       <span class="text-[13px] text-sub truncate max-w-[220px]">{{ $project->name }}</span>
     </span>
     <div class="ml-auto flex items-center gap-1.5">
-      <a href="{{ route('settings.general') }}" class="h-8 w-8 grid place-items-center rounded-md text-sub hover:bg-hover" title="Workspace settings">{!! pb_icon('gear-outline', 18) !!}</a>
+      @if ($user->currentWorkspace && $user->can('manageSettings', $user->currentWorkspace))
+        <a href="{{ route('settings.general') }}" class="h-8 w-8 grid place-items-center rounded-md text-sub hover:bg-hover" title="Workspace settings">{!! pb_icon('gear-outline', 18) !!}</a>
+      @endif
       <span class="h-7 w-7 rounded-full bg-emerald-500 grid place-items-center text-white text-[11px] font-bold">{{ $user->initial() }}</span>
     </div>
   </header>
@@ -58,7 +60,9 @@
         <p class="text-[13px] text-sub mt-1 max-w-[560px]">This is <span class="font-medium text-ink">{{ $project->name }}</span>. Work items, cycles, modules and pages arrive in the next phases of Project Block. For now you can manage the project from workspace settings.</p>
         <div class="flex flex-wrap gap-3 mt-4">
           <a href="{{ route('projects.index') }}" class="h-9 px-4 grid place-items-center rounded-md border border-stroke hover:bg-hover text-ink text-[13px] font-semibold">Back to Projects</a>
-          <a href="{{ route('settings.general') }}" class="h-9 px-4 grid place-items-center rounded-md border border-stroke hover:bg-hover text-ink text-[13px] font-semibold">Workspace settings</a>
+          @if ($user->currentWorkspace && $user->can('manageSettings', $user->currentWorkspace))
+            <a href="{{ route('settings.general') }}" class="h-9 px-4 grid place-items-center rounded-md border border-stroke hover:bg-hover text-ink text-[13px] font-semibold">Workspace settings</a>
+          @endif
         </div>
       </div>
       <div class="h-10"></div>

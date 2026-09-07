@@ -4,6 +4,7 @@ use App\Http\Controllers\Dev\LogViewerController;
 use App\Http\Middleware\EnforceIdleTimeout;
 use App\Http\Middleware\BackofficeSessionTimeout;
 use App\Http\Middleware\EnsureBackofficeVerified;
+use App\Http\Middleware\EnsureWorkspaceAdmin;
 use App\Http\Middleware\InitializeWorkspaceTenancy;
 use App\Http\Middleware\InjectSessionGuard;
 use App\Http\Middleware\RequireAccessCode;
@@ -49,6 +50,13 @@ return Application::configure(basePath: dirname(__DIR__))
 
         $middleware->alias([
             'workspace.tenancy' => InitializeWorkspaceTenancy::class,
+            /*
+             * Workspace administration, owner/admin only. An alias rather than a group append
+             * for the same reason as the Back Office pair below: it guards MOST of the
+             * settings area and deliberately not the member LIST, which everybody in the
+             * workspace may read.
+             */
+            'workspace.admin' => EnsureWorkspaceAdmin::class,
             /*
              * The Back Office gate (docs/features/backoffice-auth.md, §4 and §9).
              *

@@ -32,9 +32,32 @@ class ProjectMember extends Model
         'tenant_id',
         'project_id',
         'user_id',
+        // Set only while the row is an INVITATION — somebody named by address who has not
+        // accepted yet (docs/features/project-member-invitations.md). Cleared the moment the
+        // address becomes a person, so a real membership never carries two identities.
+        'email',
         'added_by',
         'role',
+        'invited_role',
+        'workspace_invitation_id',
+        'invited_at',
     ];
+
+    protected function casts(): array
+    {
+        return ['invited_at' => 'datetime'];
+    }
+
+    /** Still waiting on somebody to accept — a placeholder, not a membership. */
+    public function isPending(): bool
+    {
+        return $this->user_id === null;
+    }
+
+    public function invitation(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    {
+        return $this->belongsTo(WorkspaceInvitation::class, 'workspace_invitation_id');
+    }
 
     /**
      * This user's role in this project, or null if they are not a member.

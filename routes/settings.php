@@ -22,7 +22,26 @@ use Illuminate\Support\Facades\Route;
 | settings models are auto-confined. require __DIR__.'/settings.php'; from web.php
 */
 
+/*
+ * The member LIST is the one settings page everybody in the workspace may read: the sidebar
+ * offers Members to all of them, and MembersSettingsController guards every ACTION on it with
+ * its own guardManage(). So it sits outside the admin group below rather than inside it —
+ * putting it in would 403 a link that every member currently uses.
+ */
 Route::middleware(['auth', 'workspace.tenancy'])
+    ->prefix('settings')
+    ->name('settings.')
+    ->group(function () {
+        Route::get('/members', [MembersSettingsController::class, 'show'])->name('members');
+    });
+
+/*
+ * Everything else under /settings is workspace administration, and administration is
+ * owner/admin only (spec §3 / §13). On the ROUTES, not only on the links that lead to them:
+ * hiding a sidebar entry stops people walking in by accident, it does not stop anyone who
+ * types the URL.
+ */
+Route::middleware(['auth', 'workspace.tenancy', 'workspace.admin'])
     ->prefix('settings')
     ->name('settings.')
     ->group(function () {
@@ -34,8 +53,8 @@ Route::middleware(['auth', 'workspace.tenancy'])
         Route::post('/general/logo', [GeneralSettingsController::class, 'logo'])->name('general.logo');
         Route::delete('/general', [GeneralSettingsController::class, 'destroy'])->name('general.destroy');
 
-        // Administration > Members (spec §5)
-        Route::get('/members', [MembersSettingsController::class, 'show'])->name('members');
+        // Administration > Members (spec §5). The LIST is registered above, outside this
+        // group; everything that CHANGES a membership is administration.
         Route::post('/members/invite', [MembersSettingsController::class, 'invite'])
             ->middleware('throttle:12,1')->name('members.invite');
         Route::patch('/members/{membership}/role', [MembersSettingsController::class, 'updateRole'])->name('members.role');

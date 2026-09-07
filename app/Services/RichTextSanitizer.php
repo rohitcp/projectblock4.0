@@ -31,10 +31,42 @@ class RichTextSanitizer
         'table', 'thead', 'tbody', 'tfoot', 'tr', 'td', 'th', 'caption', 'colgroup', 'col',
         // The image and video buttons wrap their media in a figure.
         'figure', 'figcaption',
+        // The Wiki editor's collapsible container (docs/features/wiki-lexical-editor.md).
+        // Native elements rather than a div pair, so a collapsible still opens and closes for
+        // a reader who is looking at the stored HTML outside the editor.
+        'details', 'summary',
     ];
 
-    /** Elements that may carry inline styling (alignment, colour, table widths). */
-    private const STYLEABLE = ['p', 'div', 'span', 'li', 'td', 'th', 'table', 'tr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'];
+    /** Elements that may carry inline styling (alignment, colour, table widths, columns). */
+    private const STYLEABLE = ['p', 'div', 'span', 'li', 'td', 'th', 'table', 'tr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'details', 'figure'];
+
+    /**
+     * The Wiki editor's own node metadata (docs/features/wiki-lexical-editor.md).
+     *
+     * Its richer nodes — page break, embed, poll, equation, sticky note, columns, date — are
+     * REBUILT from these attributes when a page is opened. Drop them and the node degrades to
+     * whatever plain markup it happened to be carrying: an equation becomes its LaTeX as text,
+     * a poll becomes a list. So they have to survive sanitizing.
+     *
+     * They survive as DATA, never as authority. Nothing here is trusted: `data-wk-src` is
+     * re-checked against the embed host allowlist when the node is built, and `data-wk-poll`
+     * is parsed as JSON with every field defaulted — a crafted value costs the node, not the
+     * page.
+     */
+    private const WK_DATA = [
+        'data-wk',           // which node this is
+        'data-wk-provider',  // embed: youtube | figma | excalidraw | tweet
+        'data-wk-src',       // embed: the URL being embedded
+        'data-wk-poll',      // poll: question and options, as JSON
+        'data-wk-tex',       // equation: the LaTeX, which is the source of truth
+        'data-wk-inline',    // equation: rendered in the line rather than as a block
+        'data-wk-color',     // sticky note
+        'data-wk-date',      // date: the ISO value behind the formatted text
+        'data-wk-threads',   // comment mark: which comment threads reference this passage
+    ];
+
+    /** The elements that metadata may sit on. */
+    private const WK_HOSTS = ['div', 'span', 'figure', 'iframe', 'details', 'mark'];
 
     /**
      * Hosts an embedded video may come from.
@@ -45,6 +77,23 @@ class RichTextSanitizer
     private const VIDEO_HOSTS = [
         'www.youtube.com', 'youtube.com', 'www.youtube-nocookie.com', 'youtube-nocookie.com',
         'player.vimeo.com', 'vimeo.com',
+    ];
+
+    /**
+     * The other hosts the Wiki editor may embed a page from.
+     *
+     * Kept as a NAMED LIST for the same reason VIDEO_HOSTS is one: an `<iframe>` is a page
+     * inside the page, and an open one would let anyone paste a convincing login form onto a
+     * teammate's screen. Adding a provider is a line here and a line in the editor's own list —
+     * both, deliberately, so neither side can widen this alone.
+     *
+     * X/Twitter is NOT here and is not an iframe: a live tweet needs Twitter's widgets.js
+     * fetched from their CDN at runtime, which this app does not do for any dependency. A
+     * tweet is stored and rendered as a link card instead.
+     */
+    private const EMBED_HOSTS = [
+        'www.figma.com', 'figma.com',
+        'excalidraw.com', 'www.excalidraw.com', 'link.excalidraw.com',
     ];
 
     /** CSS that never has a legitimate place in a description. */
@@ -116,7 +165,7 @@ class RichTextSanitizer
             // http as well as https: local and staging hosts are not on TLS, and uploaded
             // images are served from this application's own origin.
             ->allowMediaSchemes(['http', 'https'])
-            ->allowMediaHosts(array_merge(self::VIDEO_HOSTS, self::ownHost()))
+            ->allowMediaHosts(array_merge(self::VIDEO_HOSTS, self::EMBED_HOSTS, self::ownHost()))
             ->allowRelativeLinks()
             ->allowRelativeMedias();
 
@@ -140,9 +189,26 @@ class RichTextSanitizer
             // Quill marks bullet vs ordered items with `data-list` rather than the wrapping
             // element. Dropping it would silently turn every bullet list into a numbered one.
             ->allowAttribute('data-list', ['li'])
+            ->allowAttribute('open', ['details'])
+            // A CHECK LIST's state lives entirely in these two, and Lexical reads them back to
+            // rebuild it: `aria-checked` per item is the tick, and its presence on any child is
+            // also how a plain <ul> is recognised as a check list at all. Drop them and every
+            // check list comes back as bullets with the ticks gone — silent data loss.
+            ->allowAttribute('aria-checked', ['li'])
+            ->allowAttribute('data-is-checklist', ['ul', 'ol'])
+            // A CODE BLOCK's language, which is what the highlighter colours by. Losing it
+            // costs the colours, not the code — but there is no reason to lose it.
+            ->allowAttribute('data-language', ['pre'])
+            ->allowAttribute('data-highlight-language', ['pre'])
             ->allowAttribute('colspan', ['td', 'th'])
             ->allowAttribute('rowspan', ['td', 'th'])
-            ->allowAttribute('style', self::STYLEABLE)
+            ->allowAttribute('style', self::STYLEABLE);
+
+        foreach (self::WK_DATA as $attribute) {
+            $config = $config->allowAttribute($attribute, self::WK_HOSTS);
+        }
+
+        $config = $config
             ->withAttributeSanitizer(new class implements AttributeSanitizerInterface
             {
                 public function getSupportedElements(): ?array
@@ -190,7 +256,9 @@ class RichTextSanitizer
      */
     private function isBlank(string $html): bool
     {
-        if (preg_match('/<(img|iframe|table|hr)\b/i', $html)) {
+        // `data-wk` covers the Wiki editor's own nodes — a page break, a poll or an empty
+        // sticky note has no words in it and is still not a blank document.
+        if (preg_match('/<(img|iframe|table|hr|details)\b/i', $html) || str_contains($html, 'data-wk')) {
             return false;
         }
 

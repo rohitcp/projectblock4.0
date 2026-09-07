@@ -8,6 +8,11 @@
      work items and so could never publish one. Resolved defensively like the two above, so
      the partial keeps working on any screen that does not pass it. --}}
 @php($__canDraft = $canDraft ?? (auth()->check() && auth()->user()->can('createDraft', \App\Models\WorkItem::class)))
+{{-- Workspace administration is owner/admin only. The middleware on the /settings routes is
+     what enforces it; this is what stops everyone else walking into a 403 they cannot act on.
+     Members stays visible to all: its list is readable by the whole workspace, and every
+     action on it is guarded in the controller. --}}
+@php($__wsAdmin = $__ws !== null && optional(auth()->user())->can('manageSettings', $__ws))
 {{-- Wiki appears in the rail only once the workspace has enabled it (docs/features/wiki.md).
      Asked through WorkspaceApps so this and the two Settings screens cannot disagree about
      whether the app is on. --}}
@@ -41,10 +46,12 @@
   <div class="flex items-center gap-2 px-4 h-12 shrink-0">
     <span class="font-semibold text-ink truncate">{{ $__ws->name }}</span>
     <div class="ml-auto flex items-center gap-1 text-faint shrink-0">
-      <a href="{{ route('settings.general') }}" title="Workspace settings" aria-label="Workspace settings"
-         class="h-7 w-7 grid place-items-center rounded hover:bg-hover hover:text-ink">
-        {!! pb_icon('sliders', 15) !!}
-      </a>
+      @if ($__wsAdmin)
+        <a href="{{ route('settings.general') }}" title="Workspace settings" aria-label="Workspace settings"
+           class="h-7 w-7 grid place-items-center rounded hover:bg-hover hover:text-ink">
+          {!! pb_icon('sliders', 15) !!}
+        </a>
+      @endif
       {{-- Collapse the panel. Desktop only: on a narrow screen the sidebar is already a
            drawer, and the close button beside this one is what dismisses it. --}}
       <button type="button" id="collapse-sidebar" title="Collapse sidebar" aria-label="Collapse sidebar"
@@ -126,10 +133,12 @@
           {!! pb_icon('grid', 14, 'text-sub shrink-0') !!}
           Projects
         </a>
-        <a href="{{ route('settings.general') }}" class="flex items-center gap-2 pl-3 pr-2 h-8 rounded-md text-ink hover:bg-hover">
-          {!! pb_icon('gear', 14, 'text-sub shrink-0') !!}
-          Settings
-        </a>
+        @if ($__wsAdmin)
+          <a href="{{ route('settings.general') }}" class="flex items-center gap-2 pl-3 pr-2 h-8 rounded-md text-ink hover:bg-hover">
+            {!! pb_icon('gear', 14, 'text-sub shrink-0') !!}
+            Settings
+          </a>
+        @endif
         <a href="{{ route('settings.members') }}" class="flex items-center gap-2 pl-3 pr-2 h-8 rounded-md text-ink hover:bg-hover">
           {!! pb_icon('users', 14, 'text-sub shrink-0') !!}
           Members

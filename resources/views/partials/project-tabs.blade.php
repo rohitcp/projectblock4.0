@@ -57,7 +57,7 @@
       @endforeach
     </nav>
 
-    {{-- Settings, as a tab with a submenu of PROJECT ACTIONS.
+    {{-- Project Settings, as a tab with a submenu of PROJECT ACTIONS.
 
          It replaced the ⋯ menu that used to sit beside the project name and carries the same
          four things, so nothing was lost in the move — only relocated to where a tab bar
@@ -67,24 +67,34 @@
          `route('projects.'.$key, $project)` cannot satisfy a route that takes a `section`.
 
          Outside the <nav> deliberately — that list scrolls, which would make it a clipping
-         container and swallow a menu positioned below the row. --}}
+         container and swallow a menu positioned below the row.
+
+         BESIDE the last tab, not pushed to the far right: it belongs with the other things
+         that take you somewhere in this project, and a lone control across an empty row reads
+         as belonging to the page rather than to the project. That is why there is no
+         `ml-auto` here — the row's own gap places it. --}}
     @if ($canManage ?? false)
-      <details class="pb-projmenu relative shrink-0 ml-auto">
+      <details class="pb-projmenu relative shrink-0">
         {{-- Keep <summary> at its default display: `display:grid`/`flex` on a summary stops
              WebKit toggling the disclosure at all, so the sizing lives on an inner span. --}}
         <summary class="list-none [&::-webkit-details-marker]:hidden cursor-pointer"
                  role="button" aria-haspopup="menu" title="Project settings">
           <span class="px-2.5 h-12 flex items-center gap-1.5 text-[13px] text-sub hover:text-ink border-b-2 border-transparent whitespace-nowrap">
-            Settings
+            Project Settings
             {!! pb_icon('chevron-down', 13, 'text-faint') !!}
           </span>
         </summary>
 
-        <div role="menu" class="absolute right-0 top-full mt-1 w-56 rounded-md bg-white py-1 shadow-lg outline outline-1 outline-black/5 z-50">
+        {{-- Dropped from the control's LEFT edge now that it sits mid-row: `right-0` anchored
+             it to a right edge that is no longer the screen's, which threw the menu leftwards
+             into the tabs. --}}
+        <div role="menu" class="absolute left-0 top-full mt-1 w-56 rounded-md bg-white py-1 shadow-lg outline outline-1 outline-black/5 z-50">
           <a href="{{ route('projects.settings', ['project' => $project->id, 'section' => 'general']) }}"
              role="menuitem" class="w-full flex items-center gap-2.5 px-3 h-9 text-[13px] text-ink hover:bg-hover">
             {!! pb_icon('gear', 15, 'text-faint shrink-0') !!}
-            Project settings
+            {{-- "General" and not "Project settings": the control that opened this menu now
+                 says that, and a menu whose first item repeats its own name says nothing. --}}
+            General
           </a>
 
           {{-- Marked rather than hidden: a disabled row says what is coming more honestly

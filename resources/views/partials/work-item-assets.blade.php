@@ -29,7 +29,13 @@
 {{-- The <wi-list> grid itself. --}}
 <script defer src="{{ pb_asset('assets/js/projects/work-item-list.js') }}"></script>
 
-{{-- The description editor. Here rather than on each screen for the same reason the grid's
-     assets are: the pair has a load order, and one page getting it wrong is a screen with no
-     editor. --}}
+{{-- The drawer's rich-text boxes — description, comment, reply and status update — all mount
+     <wk-editor> (Lexical) with `minimal`. Here rather than on each screen for the same reason
+     the grid's assets are: the set has a load order, and one page getting it wrong is a screen
+     with no editor.
+
+     `rich-editor` still comes with it: <wi-editor> (Quill) is defined in work-items.js and
+     other screens mount it, and Tribute is loaded there too. Neither is used by the drawer any
+     more. --}}
 @include('partials.rich-editor')
+@include('partials.lexical-editor')

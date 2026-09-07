@@ -1,0 +1,1029 @@
+/* Wiki › the Lexical editor.
+   ------------------------------------------------------------------
+   Lexical ships no styling at all — a theme is a map from node type to class name (WK_THEME in
+   assets/js/lexical/editor.js) and this file is the other half of it. Nothing here styles
+   a bare tag: a pasted <b> and a typed bold become the same node, and the node decides the
+   class, so styling the class is what keeps the two identical.
+
+   Unlike the Jodit editor this replaces, the document is NOT in an iframe — it is an element on
+   the page. So the sheet lives here rather than being injected as a string, which is the whole
+   reason this file exists. The cost is that the app's stylesheets can now reach the document;
+   everything below is scoped under .wk-doc to keep that from happening by accident.
+   ------------------------------------------------------------------ */
+
+.wk-editor { display: block; }
+
+/* The desk the sheet sits on. */
+.wk-editor__sheet { background: #f3f4f6; min-height: 100%; padding: 24px 0 64px; }
+.wk-editor__down { max-width: 640px; margin: 24px auto; color: #b91c1c; font-size: 13px; }
+
+/* ---- the sheet ----
+   Width, height and the page boundaries come from --wk-page-w / --wk-page-h, which the
+   component sets from WK_PAGE_FORMATS. A new paper size is then a line of JS and nothing here.
+
+   The boundary is the last pixel of each page-height tile, repeated down the document for as
+   long as the text runs. `background-origin: border-box` so the first boundary is measured
+   from the top of the sheet rather than from below its padding.
+
+   The honest limit: the document is one continuous contenteditable, so while writing, a line
+   can sit ACROSS a boundary. The line says where the printed page ends; @page below is what
+   actually breaks the paper. Splitting the document into an element per sheet is what costs
+   you the caret, the selection, and every table that spans a break. */
+.wk-doc {
+  outline: none;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.75;
+  color: #1f2328;
+  overflow-wrap: break-word;
+}
+.wk-doc--paged {
+  /* The gap BETWEEN sheets. Its own property so the tile arithmetic below reads as arithmetic
+     rather than as three magic numbers that have to agree. */
+  --wk-page-gap: 30px;
+
+  width: var(--wk-page-w, 794px);
+  max-width: 100%;
+  min-height: var(--wk-page-h, 1123px);
+  margin: 0 auto;
+  padding: 56px 64px;
+
+  /* The whole stack, drawn as ONE repeating tile: a full sheet of white, then the gutter,
+     then the next sheet. The TILE is a page plus a gap, so the white band is exactly one
+     printed page — putting the gap inside the page height instead would quietly make every
+     sheet 30px shorter than the paper it stands for.
+
+     FOUR layers, and the order is what makes the gutter clean:
+
+       1-2. the left and right edges of each sheet. Each is a 1px column whose own gradient
+            stops at the page height, so the edge ends where the sheet ends and NOTHING is
+            drawn down the sides of the gap. This replaced a `box-shadow`, which cannot do
+            that: a shadow wraps the whole continuous column, so it painted two coloured
+            edges straight through every gutter and the gap read as a slot rather than as a
+            space between two sheets.
+       3.   the horizontal bands — the sheet's own top and bottom hairlines, and the desk
+            between them.
+       4.   white, for the last partial tile. Without it the tail of the document is
+            transparent and the desk shows through the sheet rather than around it. */
+  background:
+    /* 1. left edge, sheet only */
+    linear-gradient(
+      to bottom,
+      #e5e7eb 0,
+      #e5e7eb var(--wk-page-h, 1123px),
+      transparent var(--wk-page-h, 1123px)
+    )
+    repeat-y left 0 / 1px calc(var(--wk-page-h, 1123px) + var(--wk-page-gap)),
+    /* 2. right edge, sheet only */
+    linear-gradient(
+      to bottom,
+      #e5e7eb 0,
+      #e5e7eb var(--wk-page-h, 1123px),
+      transparent var(--wk-page-h, 1123px)
+    )
+    repeat-y right 0 / 1px calc(var(--wk-page-h, 1123px) + var(--wk-page-gap)),
+    /* 3. the sheets and the gap between them */
+    linear-gradient(
+      to bottom,
+      #fff 0,
+      #fff calc(var(--wk-page-h, 1123px) - 1px),
+      #e5e7eb calc(var(--wk-page-h, 1123px) - 1px),
+      #e5e7eb var(--wk-page-h, 1123px),
+      /* the desk, seen through the gap — the SAME tone as .wk-editor__sheet around it, so the
+         gap reads as the desk showing through rather than as a band of its own colour */
+      #f3f4f6 var(--wk-page-h, 1123px),
+      #f3f4f6 calc(var(--wk-page-h, 1123px) + var(--wk-page-gap) - 1px),
+      #e5e7eb calc(var(--wk-page-h, 1123px) + var(--wk-page-gap) - 1px),
+      #e5e7eb calc(var(--wk-page-h, 1123px) + var(--wk-page-gap))
+    )
+    repeat-y 0 0 / 100% calc(var(--wk-page-h, 1123px) + var(--wk-page-gap)),
+    /* 4. the floor */
+    #fff;
+  background-origin: border-box;
+}
+/* Paperless: no sheet, no boundaries, one continuous document at the content width. The floor
+   is the editor's own minHeight so an empty page is a writing area rather than one line. */
+.wk-doc--paperless {
+  width: auto;
+  max-width: var(--wk-content-w, 820px);
+  min-height: var(--wk-min-h, 420px);
+  margin: 0 auto;
+  padding: 32px 24px 25vh;
+  background: #fff;
+}
+/* Without document view the content is an ordinary field, held to the same measure. */
+.wk-doc--plain {
+  max-width: var(--wk-content-w, 820px);
+  min-height: var(--wk-min-h, 420px);
+  margin: 0 auto;
+  padding: 20px 24px 25vh;
+}
+
+/* A file is being dragged over the editor. Drawn INSIDE the box with an inset outline rather
+   than a border, so nothing reflows at the moment of the drop — a target that jumps as you
+   release it is one you miss. */
+.wk-doc--dropping {
+  outline: 2px dashed #1b5f8a;
+  outline-offset: -4px;
+  background-color: #f5f9fc;
+}
+
+/* Lexical has no placeholder of its own; the component says when the document is empty. */
+.wk-doc[data-empty="1"]::before {
+  content: attr(data-placeholder);
+  color: #9ca3af;
+  position: absolute;
+  pointer-events: none;
+}
+.wk-doc[data-empty="1"] { position: relative; }
+
+/* ---- the document's own typography ---- */
+.wk-doc .wk-h1 { font-size: 28px; font-weight: 700; margin: 28px 0 8px; }
+.wk-doc .wk-h2 { font-size: 22px; font-weight: 700; margin: 24px 0 8px; }
+.wk-doc .wk-h3 { font-size: 18px; font-weight: 600; margin: 20px 0 6px; }
+.wk-doc .wk-h4 { font-size: 16px; font-weight: 600; margin: 18px 0 6px; }
+.wk-doc .wk-h5,
+.wk-doc .wk-h6 { font-size: 15px; font-weight: 600; margin: 16px 0 6px; }
+.wk-doc .wk-p { margin: 0 0 10px; }
+.wk-doc .wk-ul { list-style: disc; padding-left: 1.5em; margin: 0 0 10px; }
+.wk-doc .wk-ol { list-style: decimal; padding-left: 1.5em; margin: 0 0 10px; }
+.wk-doc .wk-li { margin: 4px 0; }
+/* A nested list's own item carries no marker — the list inside it does. */
+.wk-doc .wk-li-nested { list-style: none; }
+/* Check list. The box is drawn on the item itself, so a checked item still reads as one when
+   the stored HTML is rendered outside this editor and nothing is listening for clicks. */
+.wk-doc .wk-check,
+.wi-rich .wk-check { list-style: none; padding-left: 4px; margin: 0 0 10px; }
+.wk-doc .wk-check .wk-li,
+.wi-rich .wk-check .wk-li {
+  position: relative;
+  padding-left: 26px;
+  margin: 4px 0;
+  list-style: none;
+  outline: none;
+}
+.wk-doc .wk-check .wk-li::before,
+.wi-rich .wk-check .wk-li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 5px;
+  width: 15px;
+  height: 15px;
+  border: 1.5px solid #c9ced6;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+}
+/* Qualified with .wk-check, and not shortened to `.wk-li--done`: the unchecked box above is
+   `.wk-check .wk-li`, two classes deep, so a one-class rule loses to it and the box stays
+   empty however correct the state is. */
+.wk-doc .wk-check .wk-li--done::before,
+.wi-rich .wk-check .wk-li--done::before { background: #1b5f8a; border-color: #1b5f8a; }
+/* The tick is drawn rather than a glyph, so it keeps its weight at every zoom. */
+.wk-doc .wk-check .wk-li--done::after,
+.wi-rich .wk-check .wk-li--done::after {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 8px;
+  width: 4px;
+  height: 8px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.wk-doc .wk-check .wk-li--done,
+.wi-rich .wk-check .wk-li--done { color: #9ca3af; text-decoration: line-through; }
+
+/* Code block. */
+.wk-doc .wk-code-block,
+.wi-rich .wk-code-block {
+  display: block;
+  margin: 14px 0;
+  padding: 14px 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f8f9fa;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  tab-size: 2;
+  overflow-x: auto;
+  white-space: pre-wrap;
+}
+/* One palette for every language: the highlighter names token TYPES, not languages, so a
+   colour per type is a colour per meaning rather than per file extension. */
+.wk-doc .wk-tok-key, .wi-rich .wk-tok-key { color: #a21caf; }
+.wk-doc .wk-tok-str, .wi-rich .wk-tok-str { color: #15803d; }
+.wk-doc .wk-tok-num, .wi-rich .wk-tok-num { color: #c2410c; }
+.wk-doc .wk-tok-fn, .wi-rich .wk-tok-fn { color: #1b5f8a; }
+.wk-doc .wk-tok-attr, .wi-rich .wk-tok-attr { color: #4338ca; }
+.wk-doc .wk-tok-op, .wi-rich .wk-tok-op { color: #4b5563; }
+.wk-doc .wk-tok-punct, .wi-rich .wk-tok-punct { color: #9ca3af; }
+.wk-doc .wk-tok-note, .wi-rich .wk-tok-note { color: #9ca3af; font-style: italic; }
+
+.wk-doc .wk-quote {
+  border-left: 3px solid #e5e7eb;
+  margin: 12px 0;
+  padding: 2px 0 2px 14px;
+  color: #6b7280;
+}
+.wk-doc .wk-link { color: #2563eb; text-decoration: underline; }
+.wk-doc .wk-bold { font-weight: 700; }
+.wk-doc .wk-italic { font-style: italic; }
+.wk-doc .wk-underline { text-decoration: underline; }
+.wk-doc .wk-strike { text-decoration: line-through; }
+.wk-doc .wk-underline.wk-strike { text-decoration: underline line-through; }
+.wk-doc sub,
+.wk-doc sup { font-size: 75%; line-height: 0; position: relative; }
+.wk-doc sub { bottom: -0.25em; }
+.wk-doc sup { top: -0.5em; }
+.wk-doc .wk-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  background: #f3f4f6;
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+/* Images fit the space they are in.
+   ------------------------------------------------------------------
+   `max-width: 100%` alone is not enough: a screenshot pasted into a comment box is typically
+   1600px wide and 2000px TALL, and scaling it to the column width still leaves something that
+   fills the screen and pushes the Comment button out of reach. So height is capped too, and
+   `object-fit: contain` keeps the proportions while it is capped.
+
+   `height: auto` before the cap, so a small image is never stretched up to meet it. */
+.wk-doc img,
+.wk-doc .wk-img,
+.wi-rich img {
+  max-width: 100%;
+  height: auto;
+  max-height: 70vh;
+  object-fit: contain;
+  display: block;
+  margin: 12px 0;
+  border-radius: 6px;
+}
+/* A FIELD is a box inside a page, and 70vh of it is most of the drawer. Two thirds of the
+   editor's own minimum height keeps a pasted screenshot readable without burying the buttons
+   underneath it. */
+.wk-editor--mini .wk-doc img,
+.wk-editor--mini .wk-doc .wk-img { max-height: 320px; margin: 8px 0; }
+.wk-doc hr,
+.wk-doc .wk-rule { border: 0; border-top: 1px solid #e5e7eb; margin: 24px 0; }
+/* Tables are read-only in this slice — pasted ones keep their shape, the toolbar cannot yet
+   build one (docs/features/wiki-lexical-editor.md). */
+.wk-doc table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+.wk-doc th,
+.wk-doc td { border: 1px solid #e5e7eb; padding: 8px 10px; text-align: left; vertical-align: top; }
+.wk-doc th { background: #f6f7f8; font-weight: 600; }
+
+/* ---- the toolbar ----
+   Teleported into #pb-page-toolbar, above the scroller, so it stays at the top of the screen
+   while the document scrolls beneath it. */
+.wk-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  /* Centred, so the toolbar sits over the sheet rather than hugging the left edge of a screen
+     the document is not using. It wraps rather than scrolls: a control that has run off the
+     end of a bar is a control nobody finds. */
+  justify-content: center;
+  gap: 2px;
+  padding: 4px 8px;
+  /* The host (.pb-page-toolbar) is sticky and white; the rule that separates it from the
+     document below is the toolbar's, so it travels with the toolbar wherever it is put. */
+  border-bottom: 1px solid #e5e7eb;
+  /* NOT `overflow: hidden` however tempting on a wrapping bar — the popovers hang below it. */
+  overflow: visible;
+}
+.wk-toolbar__group { display: flex; align-items: center; gap: 2px; }
+
+/* ---- the field-sized editor (`minimal`) ----
+   A framed control rather than a bare document: in a drawer it sits among other inputs, and a
+   panel of text with no edge reads as part of whatever is above it. */
+.wk-toolbar--mini {
+  justify-content: flex-start;
+  padding: 3px 4px;
+  border: 1px solid #e5e7eb;
+  border-bottom: 0;
+  border-radius: 8px 8px 0 0;
+  background: #fafbfc;
+}
+.wk-editor--mini .wk-editor__sheet { background: #fff; padding: 0; min-height: 0; }
+.wk-editor--mini .wk-doc {
+  border: 1px solid #e5e7eb;
+  border-radius: 0 0 8px 8px;
+  padding: 10px 12px;
+  min-height: var(--wk-min-h, 140px);
+  max-width: none;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.wk-editor--mini .wk-doc:focus-within,
+.wk-editor--mini .wk-doc:focus { border-color: #1b5f8a; }
+/* The document's generous block spacing is for a page, not for a three-line comment. */
+.wk-editor--mini .wk-doc .wk-p { margin: 0 0 6px; }
+.wk-editor--mini .wk-doc .wk-h1 { font-size: 19px; margin: 12px 0 6px; }
+.wk-editor--mini .wk-doc .wk-h2 { font-size: 17px; margin: 12px 0 6px; }
+.wk-editor--mini .wk-doc .wk-h3 { font-size: 15px; margin: 10px 0 4px; }
+.wk-toolbar__group + .wk-toolbar__group {
+  margin-left: 6px;
+  padding-left: 8px;
+  border-left: 1px solid #e5e7eb;
+}
+.wk-tb {
+  height: 28px;
+  min-width: 28px;
+  padding: 0 5px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 6px;
+  color: #6b7280;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+.wk-tb:hover:not(:disabled) { background: #f3f4f6; color: #23272f; }
+.wk-tb--on { background: #eef1f4; color: #1b5f8a; }
+.wk-tb:disabled { opacity: .4; cursor: default; }
+.wk-tb .pb-icon { display: inline-grid; place-items: center; width: 16px; height: 16px; }
+.wk-tb__glyph { font-size: 12px; font-weight: 700; line-height: 1; }
+/* A group that hosts a popover has to be the thing the popover is positioned against. */
+.wk-toolbar__group--rel { position: relative; }
+
+.wk-select {
+  height: 28px;
+  max-width: 130px;
+  padding: 0 6px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 12px;
+  color: #23272f;
+  cursor: pointer;
+}
+.wk-select--sm { max-width: 78px; }
+.wk-select:hover { border-color: #d1d5db; }
+
+/* The swatch sits INSIDE its button, under the letter, so the button says both what it does
+   and what colour it would apply. */
+.wk-tb .wk-swatch {
+  position: absolute;
+  bottom: 3px;
+  left: 5px;
+  right: 5px;
+  height: 3px;
+  border-radius: 2px;
+}
+.wk-tb:has(.wk-swatch) { position: relative; font-size: 12px; font-weight: 600; padding-bottom: 5px; }
+
+/* ---- popovers: colour grid, insert table, insert image ---- */
+.wk-pop {
+  position: absolute;
+  top: 34px;
+  left: 0;
+  z-index: 60;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .12);
+  outline: 1px solid rgba(0, 0, 0, .05);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.wk-pop--colors {
+  display: grid;
+  grid-template-columns: repeat(6, 20px);
+  gap: 6px;
+  width: max-content;
+}
+.wk-chip {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  border: 1px solid rgba(0, 0, 0, .12);
+  cursor: pointer;
+  padding: 0;
+}
+/* "No colour" has to look like an absence, not like white. */
+.wk-chip--none {
+  background:
+    linear-gradient(to bottom right, transparent calc(50% - 1px), #ef4444 50%, transparent calc(50% + 1px)),
+    #fff;
+}
+.wk-pop__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  color: #4b5563;
+}
+.wk-num {
+  width: 64px;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 12px;
+  text-align: right;
+}
+.wk-pop__go {
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: #1b5f8a;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.wk-pop__go:hover { background: #164d70; }
+
+.wk-link-input--pop { width: 230px; margin-left: 0; }
+
+.wk-link-input {
+  height: 28px;
+  width: 260px;
+  margin-left: 4px;
+  padding: 0 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #23272f;
+  outline: none;
+}
+.wk-link-input:focus { border-color: #1b5f8a; }
+
+/* ---- the Insert menu and its forms ---- */
+.wk-tb--wide { padding: 0 8px; gap: 5px; grid-auto-flow: column; }
+.wk-tb__label { font-size: 12px; font-weight: 500; }
+
+.wk-pop--menu { width: 268px; padding: 4px; gap: 0; }
+/* The page-format picker sits at the right-hand end of the toolbar, so its panel hangs from
+   that end rather than running off the screen. */
+.wk-pop--right { left: auto; right: 0; }
+.wk-pop__head {
+  margin: 0;
+  padding: 6px 8px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: #9ca3af;
+}
+.wk-menu__item--on { background: #eef1f4; color: #1b5f8a; }
+.wk-menu__item--on .wk-menu__icon { color: #1b5f8a; }
+.wk-menu__stack { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+/* The block-type button names the block, so it needs room for "Numbered list". */
+.wk-tb--block { min-width: 122px; justify-content: space-between; }
+.wk-tb--block .wk-tb__label { flex: 1; text-align: left; }
+.wk-menu__hint { font-size: 11px; color: #9ca3af; }
+.wk-menu__item {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+  font-size: 13px;
+  color: #23272f;
+  cursor: pointer;
+}
+.wk-menu__item:hover { background: #f3f4f6; }
+.wk-menu__icon { color: #6b7280; display: inline-grid; place-items: center; width: 16px; flex: 0 0 16px; padding-top: 1px; }
+
+.wk-pop__tabs { display: flex; flex-wrap: wrap; gap: 4px; }
+.wk-pop__tab {
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 12px;
+  color: #4b5563;
+  cursor: pointer;
+}
+.wk-pop__tab--on { border-color: #1b5f8a; color: #1b5f8a; background: #eef1f4; }
+
+/* The real file input is hidden inside its label — a bare one cannot be styled and reads as
+   the browser's control rather than as this app's. */
+.wk-pop__file {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 34px;
+  border: 1px dashed #d1d5db;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #4b5563;
+  cursor: pointer;
+}
+.wk-pop__file:hover { border-color: #1b5f8a; color: #1b5f8a; }
+.wk-pop__file--busy { opacity: .6; cursor: default; }
+.wk-pop__file input { display: none; }
+.wk-pop__or { margin: 0; text-align: center; font-size: 11px; color: #9ca3af; }
+.wk-area {
+  width: 230px;
+  padding: 6px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: inherit;
+  resize: vertical;
+}
+.wk-chip--sticky { width: 24px; height: 24px; }
+.wk-chip--on { outline: 2px solid #1b5f8a; outline-offset: 1px; }
+.wk-chip--yellow { background: #fde68a; }
+.wk-chip--pink { background: #fbcfe8; }
+.wk-chip--blue { background: #bfdbfe; }
+.wk-chip--green { background: #bbf7d0; }
+
+/* ================================================================
+   The nodes themselves (lexical/nodes.js).
+   Every rule is scoped under .wk-doc so it styles the document and nothing else — but these
+   class names are also what the READ-ONLY view renders, so the same block is applied there.
+   ================================================================ */
+
+/* A deliberate page break: a labelled line while editing, a real break on paper. */
+.wk-doc .wk-pagebreak,
+.wi-rich .wk-pagebreak {
+  position: relative;
+  height: 0;
+  margin: 28px 0;
+  border-top: 1px dashed #c9ced6;
+  break-after: page;
+  page-break-after: always;
+}
+.wk-doc .wk-pagebreak::after,
+.wi-rich .wk-pagebreak::after {
+  content: 'Page break';
+  position: absolute;
+  top: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0 8px;
+  background: #fff;
+  font-size: 10px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: #9ca3af;
+}
+
+/* Embeds. The ratio box is what stops an iframe collapsing to nothing before it loads. */
+.wk-doc .wk-embed,
+.wi-rich .wk-embed { position: relative; margin: 16px 0; }
+.wk-doc .wk-embed iframe,
+.wi-rich .wk-embed iframe {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f6f7f8;
+}
+.wk-doc .wk-embed--figma iframe,
+.wk-doc .wk-embed--excalidraw iframe,
+.wi-rich .wk-embed--figma iframe,
+.wi-rich .wk-embed--excalidraw iframe { aspect-ratio: 16 / 10; }
+
+/* An X post is a link card, not an embed — see WK_EMBEDS.tweet for why. */
+.wk-doc .wk-tweet,
+.wi-rich .wk-tweet {
+  margin: 16px 0;
+  padding: 12px 14px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #f8f9fa;
+  font-size: 13px;
+  word-break: break-all;
+}
+.wk-doc .wk-tweet a,
+.wi-rich .wk-tweet a { color: #2563eb; }
+
+/* Poll. The bar sits behind the row rather than beside it, so a long option does not squeeze
+   the result out of view. */
+.wk-doc .wk-poll,
+.wi-rich .wk-poll {
+  margin: 16px 0;
+  padding: 14px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #fff;
+}
+.wk-doc .wk-poll__q,
+.wi-rich .wk-poll__q { margin: 0 0 10px; font-weight: 600; }
+.wk-doc .wk-poll__row,
+.wi-rich .wk-poll__row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin: 6px 0;
+  padding: 7px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.wk-doc .wk-poll__bar,
+.wi-rich .wk-poll__bar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: #eef1f4;
+  transition: width .18s ease;
+}
+.wk-doc .wk-poll__text,
+.wk-doc .wk-poll__count,
+.wi-rich .wk-poll__text,
+.wi-rich .wk-poll__count { position: relative; }
+.wk-doc .wk-poll__count,
+.wi-rich .wk-poll__count { margin-left: auto; color: #6b7280; font-variant-numeric: tabular-nums; }
+
+/* Sticky note. */
+.wk-doc .wk-sticky,
+.wi-rich .wk-sticky {
+  margin: 16px 0;
+  padding: 14px 16px;
+  border-radius: 4px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .08), 0 6px 14px rgba(0, 0, 0, .06);
+  max-width: 320px;
+}
+.wk-doc .wk-sticky--yellow, .wi-rich .wk-sticky--yellow { background: #fef3c7; }
+.wk-doc .wk-sticky--pink, .wi-rich .wk-sticky--pink { background: #fce7f3; }
+.wk-doc .wk-sticky--blue, .wi-rich .wk-sticky--blue { background: #dbeafe; }
+.wk-doc .wk-sticky--green, .wi-rich .wk-sticky--green { background: #dcfce7; }
+
+/* Columns. `minmax(0, 1fr)` and not `1fr`: a long unbroken word in one column would otherwise
+   widen it and push the others off the sheet. */
+.wk-doc .wk-layout,
+.wi-rich .wk-layout { display: grid; gap: 16px; margin: 16px 0; }
+.wk-doc .wk-layout__item,
+.wi-rich .wk-layout__item { min-width: 0; }
+
+/* Collapsible container. */
+.wk-doc .wk-collapsible,
+.wi-rich .wk-collapsible {
+  margin: 16px 0;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+}
+.wk-doc .wk-collapsible__title,
+.wi-rich .wk-collapsible__title {
+  padding: 10px 14px;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+.wk-doc .wk-collapsible__title::-webkit-details-marker,
+.wi-rich .wk-collapsible__title::-webkit-details-marker { display: none; }
+/* The twist is drawn rather than inherited, so it matches the app's other disclosure arrows. */
+.wk-doc .wk-collapsible__title::before,
+.wi-rich .wk-collapsible__title::before {
+  content: '';
+  display: inline-block;
+  width: 0;
+  height: 0;
+  margin-right: 8px;
+  border: 4px solid transparent;
+  border-left-color: #9ca3af;
+  transition: transform .15s ease;
+  transform-origin: 2px 50%;
+}
+.wk-doc .wk-collapsible[open] > .wk-collapsible__title::before,
+.wi-rich .wk-collapsible[open] > .wk-collapsible__title::before { transform: rotate(90deg); }
+.wk-doc .wk-collapsible__body,
+.wi-rich .wk-collapsible__body { padding: 0 14px 10px; border-top: 1px solid #f1f3f5; }
+
+/* Equation and date. */
+.wk-doc .wk-eq,
+.wi-rich .wk-eq { display: block; margin: 14px 0; text-align: center; }
+.wk-doc .wk-eq--inline,
+.wi-rich .wk-eq--inline { display: inline; margin: 0; }
+.wk-doc .wk-date,
+.wi-rich .wk-date {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #eef1f4;
+  color: #1b5f8a;
+  font-size: .92em;
+  white-space: nowrap;
+}
+
+/* ---- print ----
+   The sheet is the screen's; paper gets @page. A paperless page still prints on A4, because
+   `paperless` describes how the page is written, not what comes out of a printer. */
+@media print {
+  @page { size: A4; margin: 20mm; }
+  .wk-toolbar { display: none; }
+  /* A deliberate page break is the one thing on the page that should print as a break and
+     not as a line saying "page break". */
+  .wk-doc .wk-pagebreak { border: 0; margin: 0; }
+  .wk-doc .wk-pagebreak::after { content: none; }
+  /* A collapsed container still holds text somebody chose to write. */
+  .wk-doc .wk-collapsible > .wk-collapsible__body { display: block; }
+  .wk-editor__sheet { background: none; padding: 0; }
+  .wk-doc {
+    width: auto;
+    max-width: none;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    background: #fff;
+    box-shadow: none;
+  }
+}
+
+/* ================================================================
+   Comments (docs/features/wiki-comments.md)
+   ================================================================ */
+
+/* ---- the floating toolbar over a selection ----
+   Teleported to <body> and positioned `fixed`, so it is never clipped by the scroller the
+   document lives in and never has to be converted out of viewport coordinates. */
+.wk-float {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 6px;
+  border-radius: 9px;
+  background: #fff;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, .16);
+  outline: 1px solid rgba(0, 0, 0, .06);
+}
+.wk-float__sep { width: 1px; height: 18px; margin: 0 3px; background: #e5e7eb; }
+.wk-chip--hl { width: 18px; height: 18px; border-radius: 4px; }
+
+/* ---- the comment being written ---- */
+.wk-draft {
+  width: 300px;
+  padding: 12px;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, .18);
+  outline: 1px solid rgba(0, 0, 0, .06);
+}
+.wk-draft__quote {
+  margin: 0 0 8px;
+  padding-left: 8px;
+  border-left: 2px solid #fde68a;
+  font-size: 12px;
+  color: #6b7280;
+  /* Two lines and then an ellipsis: the quote is a reminder of what you selected, not a copy
+     of it, and a long selection would push the box you are typing in off the screen. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.wk-area--draft { width: 100%; font-size: 13px; }
+.wk-draft__actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.wk-draft__cancel {
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 12px;
+  color: #6b7280;
+  cursor: pointer;
+}
+.wk-draft__cancel:hover { background: #f3f4f6; color: #23272f; }
+.wk-pop__go:disabled { opacity: .45; cursor: default; }
+
+/* ---- the `@` popup ---- */
+.wk-mention-pop {
+  width: 268px;
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 4px;
+  border-radius: 9px;
+  background: #fff;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .16);
+  outline: 1px solid rgba(0, 0, 0, .06);
+}
+.wk-mention-pop__note { margin: 0; padding: 8px 10px; font-size: 12px; color: #9ca3af; }
+.wk-mention-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+/* One highlight for hover AND for the keyboard, so the mouse and the arrow keys cannot
+   disagree about which row is about to be chosen. */
+.wk-mention-row--on { background: #eef1f4; }
+.wk-mention-row__who { min-width: 0; display: flex; flex-direction: column; }
+.wk-mention-row__name { font-size: 13px; color: #23272f; }
+.wk-mention-row__mail {
+  font-size: 11px;
+  color: #9ca3af;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- the mention chip itself ----
+   The same class the rest of the app's mentions wear, so a wiki mention and a work-item
+   mention read identically wherever the stored HTML is rendered. */
+.wk-doc .pb-mention,
+.wi-rich .pb-mention {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #eef1f4;
+  color: #1b5f8a;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* ---- the anchored passage ----
+   A DIFFERENT treatment from an ordinary highlight, which is a background colour on the text.
+   This one is an underline, so a commented passage and a highlighted passage can be the same
+   words without either hiding the other. */
+.wk-doc .wk-comment,
+.wi-rich .wk-comment {
+  background: rgba(251, 191, 36, .16);
+  border-bottom: 2px solid rgba(217, 119, 6, .45);
+  cursor: pointer;
+  color: inherit;
+}
+.wk-doc .wk-comment:hover,
+.wi-rich .wk-comment:hover { background: rgba(251, 191, 36, .3); }
+/* The selected thread's passage, stronger — this is the pair the requirement asks for:
+   light when the comment is inactive, stronger when it is the one being read. */
+.wk-doc .wk-comment--active,
+.wi-rich .wk-comment--active {
+  background: rgba(251, 191, 36, .45);
+  border-bottom-color: #b45309;
+}
+/* Two threads on one passage. Darker rather than a second underline: underlines stack into an
+   unreadable smear, and "more than one conversation here" is all this has to say. */
+.wk-doc .wk-comment--stacked,
+.wi-rich .wk-comment--stacked { background: rgba(251, 191, 36, .3); }
+
+/* ---- the sidebar ---- */
+.wk-comments {
+  width: 320px;
+  flex: 0 0 320px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid #e5e7eb;
+  background: #fff;
+}
+.wk-comments__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid #e5e7eb;
+}
+.wk-comments__tabs { display: flex; gap: 4px; }
+.wk-comments__tab {
+  height: 26px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 500;
+  color: #6b7280;
+  cursor: pointer;
+}
+.wk-comments__tab:hover { background: #f3f4f6; color: #23272f; }
+.wk-comments__tab--on { background: #eef1f4; color: #1b5f8a; }
+.wk-comments__close {
+  margin-left: auto;
+  height: 26px;
+  width: 26px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #9ca3af;
+  cursor: pointer;
+}
+.wk-comments__close:hover { background: #f3f4f6; color: #23272f; }
+.wk-comments__list { flex: 1; min-height: 0; overflow-y: auto; padding: 10px; }
+.wk-comments__empty { margin: 12px 4px; font-size: 12px; line-height: 1.6; color: #9ca3af; }
+
+.wk-thread {
+  padding: 10px;
+  margin-bottom: 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #fff;
+  cursor: pointer;
+}
+.wk-thread:hover { border-color: #d1d5db; }
+.wk-thread--on { border-color: #1b5f8a; box-shadow: 0 0 0 1px #1b5f8a; }
+.wk-thread__quote {
+  margin: 0 0 8px;
+  padding-left: 8px;
+  border-left: 2px solid #fde68a;
+  font-size: 12px;
+  color: #6b7280;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* The thread outlived its passage. Said plainly rather than shown as an empty quote — the
+   conversation may be the only record of why the text went. */
+.wk-thread__gone {
+  margin: 0 0 8px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: #fef2f2;
+  font-size: 11px;
+  font-weight: 500;
+  color: #b91c1c;
+}
+
+.wk-msg { display: flex; gap: 8px; margin-bottom: 10px; }
+.wk-msg__face {
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+}
+.wk-msg__face img { width: 100%; height: 100%; object-fit: cover; }
+.wk-msg__body { min-width: 0; flex: 1; }
+.wk-msg__who { margin: 0; font-size: 12px; font-weight: 600; color: #23272f; }
+.wk-msg__when { display: block; font-weight: 400; font-size: 11px; color: #9ca3af; }
+.wk-msg__text {
+  margin: 3px 0 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #1f2328;
+  /* Comments are plain text and people paste URLs into them. */
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.wk-msg__acts,
+.wk-thread__foot { display: flex; align-items: center; gap: 4px; margin-top: 6px; }
+
+/* The thread's actions are ICONS with tooltips: four words repeated on every message in every
+   thread is most of what a narrow sidebar has room for, and the panel stops reading as a
+   conversation and starts reading as a list of links. `data-tip` is the app's own tooltip, and
+   `aria-label` is what a screen reader gets — an icon with neither is a button nobody can
+   name. */
+.wk-act {
+  height: 24px;
+  width: 24px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #9ca3af;
+  cursor: pointer;
+  padding: 0;
+}
+.wk-act:hover { background: #f3f4f6; color: #23272f; }
+.wk-act--danger:hover { background: #fef2f2; color: #b91c1c; }
+.wk-act--go:hover { background: #ecfdf5; color: #15803d; }
+.wk-act .pb-icon { display: inline-grid; place-items: center; }
+.wk-thread__foot { padding-top: 8px; border-top: 1px solid #f1f3f5; flex-wrap: wrap; }
+/* Save / Cancel inside an open edit or reply box stay WORDS. They are the point of the form
+   you are looking at, they appear one pair at a time, and a tick beside a cross is exactly the
+   pair a tooltip is worst at telling apart. */
+.wk-msg__acts button:not(.wk-act),
+.wk-thread__foot button:not(.wk-act) {
+  border: 0;
+  background: transparent;
+  padding: 0 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #1b5f8a;
+  cursor: pointer;
+}
+.wk-msg__acts button:not(.wk-act):hover,
+.wk-thread__foot button:not(.wk-act):hover { text-decoration: underline; }
+.wk-area--edit { width: 100%; margin-top: 4px; font-size: 13px; }

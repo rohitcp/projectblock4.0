@@ -16,16 +16,14 @@
   <script src="{{ pb_asset('assets/js/vendor/vue.global.prod.js') }}"></script>
   <script defer src="{{ pb_asset('assets/js/settings/app.js') }}"></script>
 
-  {{-- The SAME editor Project Pages uses, from the shared partial. "Teams shouldn't need to
-       learn another editor" is the requirement; loading a second one here would have made a
-       liar of it. --}}
-  @include('partials.rich-editor')
-
-  {{-- work-items.css carries the rich-text read styles the body renders with; pages.css strips
-       the editor's field chrome so it reads as a document. Order is load-bearing — the same
-       order projects/pages.blade.php loads them in. --}}
+  {{-- work-items.css carries the rich-text read styles the READ-ONLY body renders with, and
+       pages.css supplies the document column and the sticky toolbar host. Both before the
+       editor's own stylesheet, which the partial loads last so it outranks them. --}}
   <link rel="stylesheet" href="{{ pb_asset('assets/css/work-items.css') }}" />
   <link rel="stylesheet" href="{{ pb_asset('assets/css/pages.css') }}" />
+
+  {{-- The Lexical editor. Project Pages still mount <pg-editor> (Jodit). --}}
+  @include('partials.lexical-editor')
 
   <script defer src="{{ pb_asset('assets/js/wiki-page.js') }}"></script>
 </head>

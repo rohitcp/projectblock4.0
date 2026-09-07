@@ -345,6 +345,9 @@ Route::middleware(['auth', 'workspace.tenancy'])
             Route::post('/features/toggle', [ProjectSettingsController::class, 'toggleFeature'])->name('features.toggle');
 
             Route::post('/members', [ProjectMembersController::class, 'store'])->name('members.store');
+            // Send a pending invitation again — the requirement's own "allow the invitation
+            // email to be resent" (docs/features/project-member-invitations.md).
+            Route::post('/members/{member}/resend', [ProjectMembersController::class, 'resend'])->name('members.resend');
             Route::patch('/members/{member}/role', [ProjectMembersController::class, 'updateRole'])->name('members.role');
             Route::delete('/members/{member}', [ProjectMembersController::class, 'remove'])->name('members.remove');
 

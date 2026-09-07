@@ -11,6 +11,9 @@
 @php($__ws = $workspace ?? optional(auth()->user())->currentWorkspace)
 @php($__wiki = app(\App\Services\WorkspaceApps::class)->isEnabled($__ws, 'wiki'))
 @php($__helpdesk = app(\App\Services\WorkspaceApps::class)->isEnabled($__ws, 'helpdesk'))
+{{-- Workspace administration is owner/admin only, so the way in is too. The middleware on the
+     routes is what enforces it; this is what stops everyone else walking into a 403. --}}
+@php($__wsAdmin = $__ws !== null && optional(auth()->user())->can('manageSettings', $__ws))
 
 <!-- AppRail -->
 <nav class="hidden lg:flex w-16 shrink-0 border-r border-line bg-[#f6f7f8] flex-col items-center py-3 gap-1">
@@ -30,9 +33,11 @@
       <span class="text-[10px] text-center leading-tight">Help Center</span>
     </a>
   @endif
-  <a href="{{ route('settings.general') }}" title="Workspace settings"
-     class="mt-auto flex flex-col items-center gap-1 w-full px-0.5 py-2 rounded-lg text-sub hover:bg-hover hover:text-ink">
-    {!! pb_icon('gear', 19) !!}
-    <span class="text-[10px] text-center leading-tight">Settings</span>
-  </a>
+  @if ($__wsAdmin)
+    <a href="{{ route('settings.general') }}" title="Workspace settings"
+       class="mt-auto flex flex-col items-center gap-1 w-full px-0.5 py-2 rounded-lg text-sub hover:bg-hover hover:text-ink">
+      {!! pb_icon('gear', 19) !!}
+      <span class="text-[10px] text-center leading-tight">Settings</span>
+    </a>
+  @endif
 </nav>

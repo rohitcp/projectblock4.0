@@ -820,16 +820,6 @@ var WorkItemsScreen = {
        * arrays; when it is absent — every existing caller — they return the flat arrays
        * unchanged, so a single-project screen behaves exactly as it did.
        */
-      editorLicense: b.editorLicense || '',
-      // A field, not a document surface — the tools somebody reaches for while describing a
-      // piece of work. The full set belongs on Pages, where the thing being edited IS a
-      // document. Image upload is in, because a description often needs a screenshot.
-      //
-      // `paragraph` is Jodit's format block (Normal / Heading 1-3) and `fontsize` its size
-      // menu; both lead, because they act on the block you are in rather than the selection,
-      // and the read view styles headings to match (`.pg-editor .jodit-wysiwyg` in
-      // work-items.css) so what you type is the size it will be.
-      editorButtons: 'paragraph,fontsize,|,bold,italic,underline,strikethrough,|,ul,ol,|,link,image,|,eraser',
       projectsById: b.projects || null,
       baseEndpoints: b.endpoints || {},
       // Detail view (§4.4). One component renders it two ways: a right-hand drawer over the
@@ -989,8 +979,6 @@ var WorkItemsScreen = {
 
       return this.drawerItem || null;
     },
-    /** Jodit where it is vendored, Quill behind it — the same test pages.js makes. */
-    useJodit: function () { return pgJoditReady(); },
     /** The signed-in user, for the Subscribe button's face. Null if they are not a member. */
     me: function () {
       var id = String(this.currentUserId || '');
@@ -1174,7 +1162,11 @@ var WorkItemsScreen = {
       }
     }
   },
-  components: { 'wi-calendar': WiCalendar, 'wi-editor': WiEditor, 'wi-avatar': WiAvatar, 'wi-list': WiList, 'pg-editor': PgEditor, 'wi-filter': WiFilter, 'wi-filter-chips': WiFilterChips },
+  // <wk-editor> is the app's Lexical editor (assets/js/lexical/editor.js), mounted here in its
+  // `minimal` field form. It replaced <pg-editor> (Jodit) and the <wi-editor> (Quill) fallback
+  // behind it in all four of this screen's rich-text boxes — leaving one behind would mean the
+  // drawer loaded three editors to show four fields.
+  components: { 'wi-calendar': WiCalendar, 'wi-editor': WiEditor, 'wi-avatar': WiAvatar, 'wi-list': WiList, 'wk-editor': WkEditor, 'wi-filter': WiFilter, 'wi-filter-chips': WiFilterChips },
   mounted: function () {
     this.bindGlobalCreate();
 
@@ -1811,8 +1803,22 @@ var WorkItemsScreen = {
     },
     closeCommentModal: function () { this.commentModal.open = false; },
     /** Strip tags before testing for content: an editor's empty document is still markup. */
+    /**
+     * Is there anything in this editor worth sending?
+     *
+     * Not words alone. A comment that is one pasted screenshot has no text and is a comment —
+     * stripping the tags and asking "is the rest blank?" left the Comment button disabled
+     * until you typed something beside the image, which reads as the paste not having worked.
+     *
+     * The same test the server's own sanitizer makes when it decides whether a body is blank
+     * (`RichTextSanitizer::isBlank`), so the two agree about what an empty comment is.
+     */
     hasText: function (html) {
-      return (html || '').replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim() !== '';
+      var body = html || '';
+
+      if (/<(img|iframe|table|hr|details)\b/i.test(body)) return true;
+
+      return body.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim() !== '';
     },
     submitCommentModal: async function () {
       this.flushEditor('commentModalEditor');
@@ -3022,15 +3028,12 @@ var WorkItemsScreen = {
     // The editor is mounted only while editing (⋯ → Edit). Reading is the common case, and
     // an editor that is always there pays its start-up cost on every open.
     '<div v-if="editingDescription && canEdit" class="mt-5">' +
-    // <pg-editor> (Jodit) in its MINIMUM configuration: no iframe, no page sheet with margins
-    // and page breaks — a description is a field, not a document — and a short toolbar rather
-    // than the full document set. Same contract as <wi-editor>, which stays as the fallback
-    // everywhere here for a checkout without the licensed package.
-    '<pg-editor v-if="useJodit" ref="descriptionEditor" v-model="draft.description" min-height="180px" ' +
-    ':document-view="false" :buttons="editorButtons" :license="editorLicense" ' +
-    ':media-upload="endpoints.mediaUpload" :mention-url="endpoints.mentionUsers" />' +
-    '<wi-editor v-else ref="descriptionEditor" v-model="draft.description" min-height="180px" class="block" ' +
-    ':media-upload="endpoints.mediaUpload" :media-gallery="endpoints.mediaGallery" :media-max-bytes="mediaMaxBytes" />' +
+    // <wk-editor> (Lexical) with `minimal`: a description is a FIELD, not a document, so the
+    // page formats, the block dropdown, the colour palette, the alignment and the Insert menu
+    // are all off and what is left is bold, lists, a link and an image. The same component the
+    // Wiki page mounts — a second editor would be a second copy of the same bugs.
+    '<wk-editor ref="descriptionEditor" v-model="draft.description" min-height="180px" minimal ' +
+    ':document-view="false" :media-upload="endpoints.mediaUpload" :mention-url="endpoints.mentionUsers" />' +
     '<div class="flex justify-end gap-2 mt-2">' +
     '<button type="button" @click="editingDescription = false" class="h-8 px-3 rounded-md border border-stroke text-[13px] font-semibold text-ink hover:bg-hover">Cancel</button>' +
     '<button type="button" @click="finishEditingDescription" class="h-8 px-4 rounded-md bg-brand hover:bg-brand-dark text-white text-[13px] font-semibold">Save</button>' +
@@ -3336,11 +3339,9 @@ var WorkItemsScreen = {
     '<div v-if="canEdit && (tab === \'all\' || tab === \'comments\')" class="mb-5">' +
     // 200px: a comment box the size of a single-line field invites single-line comments, and
     // this one carries a toolbar with headings and lists in it.
-    '<pg-editor v-if="useJodit" ref="commentEditor" v-model="composer.content" placeholder="Add comment" ' +
-    'min-height="200px" :document-view="false" :buttons="editorButtons" :license="editorLicense" ' +
+    '<wk-editor ref="commentEditor" v-model="composer.content" placeholder="Add comment" minimal ' +
+    'min-height="200px" :document-view="false" ' +
     ':media-upload="endpoints.mediaUpload" :mention-url="endpoints.mentionUsers" />' +
-    '<wi-editor v-else ref="commentEditor" v-model="composer.content" placeholder="Add comment" min-height="200px" class="block" ' +
-    ':media-upload="endpoints.mediaUpload" :media-gallery="endpoints.mediaGallery" :media-max-bytes="mediaMaxBytes" />' +
     '<div class="flex items-center mt-2">' +
     '<button type="button" @click="postComment" :disabled="composer.busy || !hasText(composer.content)" ' +
     'class="ml-auto h-8 px-4 rounded-md bg-brand hover:bg-brand-dark text-white text-[13px] font-semibold disabled:opacity-50">Comment</button>' +
@@ -3451,9 +3452,8 @@ var WorkItemsScreen = {
     'class="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md border text-[12px] font-semibold" ' +
     ':class="updateForm.status === st ? updateMeta(st).cls : \'border-line text-sub\'">' +
     '<span v-html="updateMeta(st).icon"></span>{{ updateMeta(st).label }}</button></div>' +
-    '<pg-editor v-if="useJodit" ref="updateEditor" v-model="updateForm.content" placeholder="Add an update…" ' +
-    'min-height="90px" :document-view="false" :buttons="editorButtons" :license="editorLicense" />' +
-    '<wi-editor v-else ref="updateEditor" v-model="updateForm.content" placeholder="Add an update…" min-height="90px" class="block" />' +
+    '<wk-editor ref="updateEditor" v-model="updateForm.content" placeholder="Add an update…" minimal ' +
+    'min-height="90px" :document-view="false" />' +
     '<div class="flex justify-end gap-2 mt-2">' +
     '<button type="button" @click="updateForm.open = false" class="h-8 px-3 rounded-md border border-stroke text-[13px] font-semibold text-ink hover:bg-hover">Cancel</button>' +
     '<button type="button" @click="saveUpdate" :disabled="updateForm.busy" class="h-8 px-4 rounded-md bg-brand hover:bg-brand-dark text-white text-[13px] font-semibold disabled:opacity-50">' +
@@ -3862,13 +3862,10 @@ var WorkItemsScreen = {
     '<div class="wi-rich text-[13px] text-sub mt-1.5 max-h-24 overflow-y-auto overflow-x-hidden" v-html="commentModal.target.content"></div>' +
     '</div>' +
 
-    '<pg-editor v-if="useJodit" ref="commentModalEditor" v-model="commentModal.content" ' +
+    '<wk-editor ref="commentModalEditor" v-model="commentModal.content" minimal ' +
     ':placeholder="commentModal.mode === \'edit\' ? \'Edit your comment\' : \'Write a reply\'" ' +
-    'min-height="120px" :document-view="false" :buttons="editorButtons" :license="editorLicense" ' +
+    'min-height="120px" :document-view="false" ' +
     ':media-upload="endpoints.mediaUpload" :mention-url="endpoints.mentionUsers" />' +
-    '<wi-editor v-else ref="commentModalEditor" v-model="commentModal.content" :placeholder="commentModal.mode === \'edit\' ? \'Edit your comment\' : \'Write a reply\'" ' +
-    'min-height="120px" class="block" ' +
-    ':media-upload="endpoints.mediaUpload" :media-gallery="endpoints.mediaGallery" :media-max-bytes="mediaMaxBytes" />' +
     '</div>' +
 
     '<div class="px-5 py-3 border-t border-line flex justify-end gap-2 shrink-0">' +

@@ -80,7 +80,12 @@
 
 <div class="mt-3 mx-2 rounded-md border border-line bg-hover px-3 py-2.5">
   <p class="text-[12px] text-sub">
-    Collections and pages are being built. Wiki can be switched off in
-    <a href="{{ route('settings.general') }}" class="text-brand font-semibold hover:underline">Settings</a>.
+    Collections and pages are being built.
+    @if (auth()->check() && auth()->user()->currentWorkspace && auth()->user()->can('manageSettings', auth()->user()->currentWorkspace))
+      Wiki can be switched off in
+      <a href="{{ route('settings.general') }}" class="text-brand font-semibold hover:underline">Settings</a>.
+    @else
+      A workspace owner or admin can switch Wiki off in Settings.
+    @endif
   </p>
 </div>

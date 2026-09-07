@@ -217,6 +217,8 @@ class ProjectSettingsController extends ManagesProjectController
                 'canManage' => Auth::user()->can('manageMembers', $project),
                 'endpoints' => [
                     'store' => route('projects.settings.members.store', $project),
+                    // Resend a pending invitation (docs/features/project-member-invitations.md).
+                    'resend' => route('projects.settings.members.resend', ['project' => $project->id, 'member' => '__ID__']),
                     'role' => route('projects.settings.members.role', ['project' => $project->id, 'member' => '__ID__']),
                     'remove' => route('projects.settings.members.remove', ['project' => $project->id, 'member' => '__ID__']),
                 ],
