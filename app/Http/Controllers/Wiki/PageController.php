@@ -7,6 +7,7 @@ use App\Models\WikiCollection;
 use App\Models\WikiCollectionGroup;
 use App\Models\WikiLabel;
 use App\Models\WikiPage;
+use App\Models\WikiPageCommentThread;
 use App\Services\RichTextSanitizer;
 use App\Services\WorkspaceApps;
 use Illuminate\Contracts\View\View;
@@ -14,6 +15,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 
 /**
  * Wiki pages (docs/features/wiki.md).
@@ -102,18 +104,50 @@ class PageController extends Controller
             'collection' => $collection,
             'page' => $page,
             'bootstrap' => [
-                'page' => $page->toCard() + ['content' => $page->content],
+                'page' => $page->toCard() + [
+                    'content' => $page->content,
+                    // The sheet this document is written on (docs/features/wiki-page-format.md).
+                    // Sent with the page, not asked for afterwards: the editor has to know the
+                    // format before it draws anything, or the document is laid out twice.
+                    'page_format' => $page->page_format ?: WikiPage::PAGE_FORMAT_DEFAULT,
+                ],
                 'collection' => $collection->toCard(),
                 'canEdit' => $collection->writableBy(Auth::user()),
                 'titleMax' => 200,
-                // The Jodit Pro licence, same source Project Pages reads it from. Without it
-                // the Pro plugins load but stay inert, which reads as "the toolbar is missing
-                // half its buttons" rather than as an error.
-                'editorLicense' => (string) config('projects.jodit_license'),
+                'pageFormats' => WikiPage::PAGE_FORMATS,
+                // Comments (docs/features/wiki-comments.md). Sent WITH the page rather than
+                // fetched afterwards: the editor has to know which passages are anchored
+                // before it draws them, or every commented page flashes unmarked first.
+                'threads' => WikiPageCommentThread::query()
+                    ->where('wiki_page_id', $page->id)
+                    ->with(['comments.author', 'resolver'])
+                    ->orderBy('id')
+                    ->get()
+                    ->map(fn (WikiPageCommentThread $t) => $t->toCard())
+                    ->all(),
+                // Reading the page is enough to see and reply to its comments; starting a
+                // thread writes a mark into the document, so that needs `canEdit`.
+                'canComment' => true,
+                'userId' => Auth::id(),
+                // No editor licence here any more: the Wiki editor is Lexical, which is MIT
+                // and needs no key (docs/features/wiki-lexical-editor.md). Project Pages still
+                // read the Jodit licence from config('projects.jodit_license').
                 'endpoints' => [
                     'update' => route('wiki.pages.update', ['collection' => $collection->id, 'page' => $page->id]),
                     'collection' => route('wiki.collections.show', $collection),
-                    'mediaUpload' => '',
+                    // Image upload (docs/features/wiki-lexical-editor.md). Addressed by
+                    // COLLECTION, not by page: permission to upload is the collection's to
+                    // grant, and the URL it returns is baked into the page's stored HTML.
+                    'mediaUpload' => route('wiki.pages.media.store', ['collection' => $collection->id]),
+                    // Who `@` may offer. Collection-scoped, like read access itself.
+                    'mentions' => route('wiki.mentionable-users', ['collection' => $collection->id]),
+                    'comments' => route('wiki.pages.comments.store', ['collection' => $collection->id, 'page' => $page->id]),
+                    'commentAnchors' => route('wiki.pages.comments.anchors', ['collection' => $collection->id, 'page' => $page->id]),
+                    // `__ID__` and `__COMMENT__` are the client's own placeholders, filled by
+                    // PB.withId — a route built per thread would be one route per row.
+                    'commentReply' => route('wiki.pages.comments.reply', ['collection' => $collection->id, 'page' => $page->id, 'thread' => '__ID__']),
+                    'commentResolve' => route('wiki.pages.comments.resolve', ['collection' => $collection->id, 'page' => $page->id, 'thread' => '__ID__']),
+                    'commentMessage' => route('wiki.pages.comments.update', ['collection' => $collection->id, 'page' => $page->id, 'thread' => '__ID__', 'comment' => '__COMMENT__']),
                 ],
             ],
         ]);
@@ -128,6 +162,10 @@ class PageController extends Controller
         $data = $request->validate([
             'title' => ['sometimes', 'required', 'string', 'max:200'],
             'content' => ['sometimes', 'nullable', 'string'],
+            // Changing the format is a save like any other — same endpoint, same permission
+            // check — so picking a paper size cannot become a way to write to a page you may
+            // only read. Constrained to the model's own list, never taken as given.
+            'page_format' => ['sometimes', Rule::in(WikiPage::PAGE_FORMATS)],
         ]);
 
         if (array_key_exists('content', $data)) {

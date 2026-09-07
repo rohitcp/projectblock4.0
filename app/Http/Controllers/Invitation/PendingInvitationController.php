@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Invitation;
 
 use App\Http\Controllers\Controller;
 use App\Listeners\LinkHelpCenterSpaceMemberships;
+use App\Listeners\LinkProjectMemberships;
 use App\Models\WorkspaceInvitation;
 use App\Services\OnboardingRouter;
 use App\Services\WorkspaceInvitationAccepter;
@@ -96,13 +97,32 @@ class PendingInvitationController extends Controller
          * membership. Pulled, so a refresh of a later screen does not resurrect it.
          */
         $spaceId = $request->session()->pull(LinkHelpCenterSpaceMemberships::SESSION_SPACE_KEY);
+        // The same problem for a PROJECT invitation
+        // (docs/features/project-member-invitations.md). Somebody invited to a project and
+        // dropped on the workspace home has to go and find it — and if they guess at a project
+        // they were not invited to, the answer is a 403 that reads as the invitation not having
+        // worked. `LinkProjectMemberships` leaves the id of the project the email was actually
+        // about, so this can take them straight there.
+        $projectId = $request->session()->pull(LinkProjectMemberships::SESSION_PROJECT_KEY);
+
+        $continueUrl = route('welcome');
+        $continueLabel = 'Go to workspace';
+
+        // The Space wins when both are set: only one of the two can have been the subject of
+        // the email that brought them here, and a Space invitation is never sent from a
+        // project screen.
+        if ($spaceId) {
+            $continueUrl = route('help-center.spaces.open', ['space' => $spaceId]);
+            $continueLabel = 'Go to the Space';
+        } elseif ($projectId) {
+            $continueUrl = route('projects.work-items', ['project' => $projectId]);
+            $continueLabel = 'Go to the project';
+        }
 
         return view('invitations.joined', [
             'workspace' => $workspace,
-            'continueUrl' => $spaceId
-                ? route('help-center.spaces.open', ['space' => $spaceId])
-                : route('welcome'),
-            'continueLabel' => $spaceId ? 'Go to the Space' : 'Go to workspace',
+            'continueUrl' => $continueUrl,
+            'continueLabel' => $continueLabel,
         ]);
     }
 

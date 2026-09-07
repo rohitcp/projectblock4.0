@@ -44,10 +44,13 @@
   {{-- Actions --}}
   <div class="flex items-center gap-1.5 shrink-0">
     <a href="{{ route('welcome') }}" class="hidden sm:inline-flex items-center h-8 px-3 rounded-md border border-line text-[13px] text-ink hover:bg-hover">Get started</a>
-    <a href="{{ route('settings.general') }}" class="hidden sm:inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-line text-[13px] text-ink hover:bg-hover">
-      {!! pb_icon('grid', 15) !!}
-      Workspace
-    </a>
+    {{-- Workspace administration is owner/admin only; so is the way in. --}}
+    @if (auth()->check() && auth()->user()->currentWorkspace && auth()->user()->can('manageSettings', auth()->user()->currentWorkspace))
+      <a href="{{ route('settings.general') }}" class="hidden sm:inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-line text-[13px] text-ink hover:bg-hover">
+        {!! pb_icon('grid', 15) !!}
+        Workspace
+      </a>
+    @endif
     <a href="{{ route('inbox.index') }}" class="relative h-8 w-8 grid place-items-center rounded-md text-sub hover:bg-hover" title="Inbox" aria-label="Inbox">{!! pb_icon('inbox', 17) !!}
       @php($__inboxCount = auth()->check() ? \App\Models\InboxNotification::query()->for(auth()->id())->unread()->count() : 0)
       {{-- Rendered server-side and then kept current over the socket (§26/§27): the count has

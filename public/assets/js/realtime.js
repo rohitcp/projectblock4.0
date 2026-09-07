@@ -123,6 +123,40 @@
     };
   }
 
+  /* ---- Wiki: one page's live comment stream (docs/features/wiki-comments.md) ----
+     The PAGE and not the person, for the same reason the Space channel is the Space: a comment
+     concerns whoever has that page open, which is usually several people and never only its
+     author.
+
+     Returns an unsubscribe function, and a NO-OP one when there is no socket — a caller must be
+     able to write `var stop = PB.onWikiComments(...)` and call `stop()` in beforeUnmount
+     without first asking whether Reverb is running. */
+  var WIKI_COMMENT_EVENTS = [
+    'wiki.comment.created', 'wiki.comment.replied', 'wiki.comment.updated',
+    'wiki.comment.deleted', 'wiki.comment.resolved', 'wiki.comment.reopened'
+  ];
+
+  function onWikiComments(pageId, handler) {
+    var noop = function () {};
+
+    if (!echo || !cfg || !pageId || typeof handler !== 'function') return noop;
+
+    var name = 'tenant.' + cfg.tenantId + '.wiki.page.' + pageId;
+    var ch = echo.private(name);
+
+    WIKI_COMMENT_EVENTS.forEach(function (evt) {
+      // The leading dot is what tells Echo this is a broadcastAs() name rather than a PHP
+      // class — without it nothing ever fires and the panel looks simply inert.
+      ch.listen('.' + evt, function (payload) {
+        try { handler(payload); } catch (e) { /* one bad handler must not kill the socket */ }
+      });
+    });
+
+    return function () {
+      try { echo.leave(name); } catch (e) { /* already gone */ }
+    };
+  }
+
   var echo = null;
   try { echo = connect(); } catch (e) { echo = null; }
 
@@ -130,6 +164,7 @@
   window.PB.realtime = echo;
   window.PB.onInbox = onInbox;
   window.PB.onSpaceTickets = onSpaceTickets;
+  window.PB.onWikiComments = onWikiComments;
 
   /* This file is DEFERRED and the screens are not, so a screen's mounted() can run before the
      socket exists — which is exactly what happened: the Space channel was never subscribed and

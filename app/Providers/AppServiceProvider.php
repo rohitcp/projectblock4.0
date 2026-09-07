@@ -4,6 +4,7 @@ namespace App\Providers;
 
 use App\Events\WorkspaceInvitationAccepted;
 use App\Listeners\LinkHelpCenterSpaceMemberships;
+use App\Listeners\LinkProjectMemberships;
 use App\Models\BackofficeUser;
 use App\Services\HelpCenter\HelpCenterNavigation;
 use App\Services\OnboardingRouter;
@@ -170,5 +171,8 @@ class AppServiceProvider extends ServiceProvider
          * Help Center — or anything else added later — cares about it.
          */
         Event::listen(WorkspaceInvitationAccepted::class, LinkHelpCenterSpaceMemberships::class);
+        // The same idea for projects: a project invitation is a workspace invitation carrying
+        // a project, and this is what completes the placeholder it left behind.
+        Event::listen(WorkspaceInvitationAccepted::class, LinkProjectMemberships::class);
     }
 }

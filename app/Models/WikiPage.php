@@ -64,11 +64,25 @@ class WikiPage extends Model
     /** A linked page stands for a project page (docs/features/wiki-linked-pages.md). */
     public const SOURCE_PROJECT_PAGE = 'project_page';
 
+    /**
+     * The page formats the editor can lay a document out on
+     * (docs/features/wiki-page-format.md).
+     *
+     * The paper sizes are the sheet the text flows down; 'paperless' is the absence of one —
+     * no fixed dimensions and no page breaks, just a document that scrolls. Listed here rather
+     * than in the column so adding a size is a line of PHP, and so the validator, the default
+     * and the editor all read the same list.
+     */
+    public const PAGE_FORMATS = ['a4', 'letter', 'legal', 'paperless'];
+
+    public const PAGE_FORMAT_DEFAULT = 'a4';
+
     protected $fillable = [
         'tenant_id',
         'wiki_collection_id',
         'title',
         'content',
+        'page_format',
         'source_type',
         'source_page_id',
         'parent_id',

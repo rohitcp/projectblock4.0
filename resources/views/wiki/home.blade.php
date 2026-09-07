@@ -36,8 +36,12 @@
            and nowhere else. --}}
       @if ($section === 'home')
         <div class="px-5 sm:px-8 pb-8 text-[12px] text-sub">
-          Wiki is enabled for this workspace. You can turn it off at any time in
-          <a href="{{ route('settings.general') }}" class="text-brand font-semibold hover:underline">Settings &rarr; General</a>.
+          @if (auth()->user()->currentWorkspace && auth()->user()->can('manageSettings', auth()->user()->currentWorkspace))
+            Wiki is enabled for this workspace. You can turn it off at any time in
+            <a href="{{ route('settings.general') }}" class="text-brand font-semibold hover:underline">Settings &rarr; General</a>.
+          @else
+            Wiki is enabled for this workspace. A workspace owner or admin can turn it off in Settings.
+          @endif
         </div>
       @endif
     </main>

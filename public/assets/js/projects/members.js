@@ -22,7 +22,14 @@ PB.boot('project-members', {
       table: null,
       search: '', roleFilter: 'all',
       // Dialogs, mirroring the workspace screen's invite / role / remove modals.
-      addOpen: false, adding: false, addForm: { user_id: '', role: b.defaultRole || 'contributor' },
+      addOpen: false, adding: false,
+      /* Two ways to name somebody, one action. `user_id` is a coworker picked from the
+         workspace; `email` is an address that may not have an account yet. The SERVER decides
+         which of the two a given address turns out to be — see ProjectInviter — so the screen
+         does not have to ask "are they already here?" before it can offer the field. */
+      addForm: { user_id: '', email: '', role: b.defaultRole || 'contributor' },
+      addError: '',
+      resending: 0,
       roleModal: { open: false, member: null, role: '', saving: false },
       remove: { open: false, member: null, busy: false },
       actionMenu: { open: false, row: null, style: {} }
@@ -68,6 +75,12 @@ PB.boot('project-members', {
       var r = this.roleList.find(function (x) { return x.key === self.addForm.role; });
       return r ? r.description : '';
     },
+    /* Either half of the form is enough, and never both at once — filling one disables the
+       other, so "which did I mean?" is never a question the person or the server has to ask. */
+    canAdd: function () {
+      return !!this.addForm.user_id || /\S+@\S+\.\S+/.test((this.addForm.email || '').trim());
+    },
+    addingByEmail: function () { return !this.addForm.user_id && !!(this.addForm.email || '').trim(); },
     memberCount: function () { return this.members.length; },
     isEmpty: function () { return this.members.length === 0; }
   },
@@ -121,9 +134,15 @@ PB.boot('project-members', {
     },
     nameCell: function (d) {
       var lead = d.is_lead ? ' <span class="text-[10px] font-semibold uppercase tracking-wide text-brand">Lead</span>' : '';
+      /* A row with no user yet is an INVITATION, and saying so is the difference between
+         "why can't I assign them anything?" and "ah, they haven't accepted". */
+      var pending = d.pending
+        ? ' <span class="ml-1 inline-flex items-center h-5 px-1.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-hover text-faint">Invited</span>'
+        : '';
+
       return '<span class="flex items-center gap-2.5">' +
         '<span class="h-6 w-6 rounded-full text-white grid place-items-center text-[10px] font-bold shrink-0" style="background:' + this.colorFor(d) + '">' + this.escapeHtml(d.initial || '?') + '</span>' +
-        '<span class="text-ink whitespace-nowrap">' + this.escapeHtml(d.name || '') + lead + '</span></span>';
+        '<span class="text-ink whitespace-nowrap">' + this.escapeHtml(d.name || '') + lead + pending + '</span></span>';
     },
     plainCell: function (text) {
       return '<span class="text-ink whitespace-nowrap">' + this.escapeHtml(text) + '</span>';
@@ -162,6 +181,7 @@ PB.boot('project-members', {
       this.actionMenu.open = false;
       if (!m) return;
       if (act === 'role') this.roleModal = { open: true, member: m, role: m.role, saving: false };
+      else if (act === 'resend') this.resendInvite(m);
       else if (act === 'remove') this.remove = { open: true, member: m, busy: false };
     },
     /** §21 search + §22 role filter, applied through Tabulator like the workspace screen. */
@@ -188,19 +208,48 @@ PB.boot('project-members', {
     // ---------- Add Member (§7-§11) ----------
     openAdd: function () {
       if (!this.canManage) return;
-      this.addForm = { user_id: '', role: this.defaultRole };
+      this.addForm = { user_id: '', email: '', role: this.defaultRole };
+      this.addError = '';
       this.addOpen = true;
     },
     submitAdd: async function () {
-      if (!this.addForm.user_id || this.adding) return;
+      if (!this.canAdd || this.adding) return;
       this.adding = true;
+      this.addError = '';
+
+      // Only the one that was used is sent. Sending both would make the server choose, and the
+      // person clicking Add would have no idea which of the two it acted on.
+      var body = this.addForm.user_id
+        ? { user_id: this.addForm.user_id, role: this.addForm.role }
+        : { email: this.addForm.email.trim(), role: this.addForm.role };
+
       try {
-        var resp = await this.$pb.api(this.endpoints.store, { method: 'POST', body: this.addForm });
+        var resp = await this.$pb.api(this.endpoints.store, { method: 'POST', body: body });
         this.applyLists(resp);
         this.addOpen = false;
         this.$pb.toast(resp.message || 'Member added to project successfully.');
-      } catch (e) { this.$pb.toast(this.$pb.firstError(e), 'error'); }
+      } catch (e) {
+        var msg = this.$pb.firstError(e);
+        // Kept in the DIALOG rather than thrown as a toast: the dialog stays open, and every
+        // one of these messages is about the address still sitting in the field above it.
+        if (!this.addForm.user_id) this.addError = msg;
+        else this.$pb.toast(msg, 'error');
+      }
       this.adding = false;
+    },
+
+    /** Send a pending invitation again (docs/features/project-member-invitations.md). */
+    resendInvite: async function (member) {
+      if (!this.canManage || this.resending) return;
+      this.resending = member.id;
+      this.actionMenu.open = false;
+      try {
+        var url = this.$pb.withId(this.endpoints.resend, member.id);
+        var resp = await this.$pb.api(url, { method: 'POST' });
+        this.applyLists(resp);
+        this.$pb.toast(resp.message || 'Invitation sent again.');
+      } catch (e) { this.$pb.toast(this.$pb.firstError(e), 'error'); }
+      this.resending = 0;
     },
 
     // ---------- Change role (§13) ----------
@@ -266,22 +315,39 @@ PB.boot('project-members', {
     '<div v-if="actionMenu.open" ref="actionMenuEl" :style="actionMenu.style" role="menu" class="rounded-md bg-white py-1 shadow-lg ring-1 ring-black/5">' +
     '<button type="button" role="menuitem" @click="runAction(\'role\')" class="w-full text-left flex items-center gap-2.5 px-3 h-8 hover:bg-hover text-[13px] text-ink">' +
     '' + wiIcon('pen-line', 15, 'text-faint shrink-0') + 'Change Role</button>' +
+    // Only on a row that has not been accepted. There is nothing to resend to somebody who is
+    // already here, and offering it would say the opposite of what the Invited badge says.
+    '<button v-if="actionMenu.row && actionMenu.row.pending" type="button" role="menuitem" @click="runAction(\'resend\')" class="w-full text-left flex items-center gap-2.5 px-3 h-8 hover:bg-hover text-[13px] text-ink">' +
+    '' + wiIcon('reply', 15, 'text-faint shrink-0') + 'Resend Invitation</button>' +
     '<button type="button" role="menuitem" @click="runAction(\'remove\')" class="w-full text-left flex items-center gap-2.5 px-3 h-8 hover:bg-hover text-[13px] text-danger">' +
     '' + wiIcon('arrow-right-from-bracket', 15, 'shrink-0') + 'Remove from Project</button>' +
     '</div>' +
 
     // ===== Add Member modal (§7, §32) =====
     '<pb-modal :open="addOpen" title="Add Member to Project" @close="addOpen=false">' +
-    '<p class="text-[13px] text-sub mb-3">Select a coworker from this Workspace and assign their project role.</p>' +
+    '<p class="text-[13px] text-sub mb-3">Pick a coworker from this Workspace, or invite somebody by email. Either way they are emailed about it.</p>' +
     '<label class="block text-[13px] font-medium text-ink mb-1.5">Coworker</label>' +
-    '<pb-combo v-model="addForm.user_id" :options="candidateOptions" placeholder="Search workspace members…"/>' +
+    '<pb-combo v-model="addForm.user_id" :options="candidateOptions" placeholder="Search workspace members…" :disabled="addingByEmail"/>' +
     '<p v-if="!candidateOptions.length" class="text-[12px] text-sub mt-1.5">Everyone in this workspace is already on the project.</p>' +
+
+    // The two halves are alternatives, not a form with two required fields — hence "or", and
+    // hence each disabling the other.
+    '<div class="flex items-center gap-3 my-3"><span class="flex-1 h-px bg-line"></span>' +
+    '<span class="text-[11px] uppercase tracking-wide text-faint">or invite by email</span>' +
+    '<span class="flex-1 h-px bg-line"></span></div>' +
+    '<input v-model="addForm.email" type="email" class="pb-input" placeholder="name@company.com" ' +
+    ':disabled="!!addForm.user_id" @input="addError = \'\'" @keyup.enter="submitAdd" />' +
+    '<p v-if="addError" class="mt-1.5 text-[12px] text-danger">{{ addError }}</p>' +
+    '<p v-else-if="addingByEmail" class="mt-1.5 text-[12px] text-sub">' +
+    'If they are already in this workspace they are added straight away. If not, they get an invitation and join the project when they accept.</p>' +
+
     '<label class="block text-[13px] font-medium text-ink mt-4 mb-1.5">Project Role</label>' +
     '<pb-combo :searchable="false" v-model="addForm.role" :options="roleOptions"/>' +
     '<p class="text-[12px] text-sub mt-1.5">{{ addRoleDescription }}</p>' +
     '<template #footer>' +
     '<button class="h-9 px-4 rounded-md border border-stroke text-[13px] font-semibold text-ink hover:bg-hover" @click="addOpen=false">Cancel</button>' +
-    '<button class="h-9 px-4 rounded-md bg-brand hover:bg-brand-dark text-white text-[13px] font-semibold disabled:opacity-50" :disabled="!addForm.user_id || adding" @click="submitAdd">{{ adding ? \'Adding…\' : \'Add Member\' }}</button>' +
+    '<button class="h-9 px-4 rounded-md bg-brand hover:bg-brand-dark text-white text-[13px] font-semibold disabled:opacity-50" :disabled="!canAdd || adding" @click="submitAdd">' +
+    '{{ adding ? (addingByEmail ? \'Sending…\' : \'Adding…\') : (addingByEmail ? \'Send Invitation\' : \'Add Member\') }}</button>' +
     '</template></pb-modal>' +
 
     // ===== Change role modal (§13) =====

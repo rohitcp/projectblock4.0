@@ -5,7 +5,10 @@ use App\Http\Controllers\Wiki\CollectionGuestController;
 use App\Http\Controllers\Wiki\CoverController;
 use App\Http\Controllers\Wiki\GroupController;
 use App\Http\Controllers\Wiki\LinkedPageController;
+use App\Http\Controllers\Wiki\PageCommentController;
+use App\Http\Controllers\Wiki\PageMentionController;
 use App\Http\Controllers\Wiki\PageController;
+use App\Http\Controllers\Wiki\PageMediaController;
 use App\Http\Controllers\Wiki\PublicCollectionController;
 use App\Http\Controllers\Wiki\WikiController;
 use App\Http\Controllers\Wiki\WikiGuestController;
@@ -102,6 +105,38 @@ Route::middleware(['auth', 'workspace.tenancy'])
         // BEFORE the {page} routes, or `reorder` is swallowed as a page id.
         Route::patch('/collections/{collection}/pages/reorder', [PageController::class, 'reorder'])
             ->whereNumber('collection')->name('pages.reorder');
+        // Editor image upload and serving (docs/features/wiki-lexical-editor.md). BEFORE the
+        // {page} routes: 'media' is a literal segment and would otherwise be caught by the
+        // page parameter — which whereNumber() already refuses, so it would 404 rather than
+        // reach here.
+        Route::post('/collections/{collection}/pages/media', [PageMediaController::class, 'store'])
+            ->whereNumber('collection')->name('pages.media.store');
+        Route::get('/collections/{collection}/pages/media/{media}', [PageMediaController::class, 'show'])
+            ->whereNumber(['collection', 'media'])->name('pages.media.show');
+
+        // Who the editor may offer when somebody types `@`. Collection-scoped because that
+        // is what read access is scoped to — a mention nobody can follow is a broken one.
+        Route::get('/collections/{collection}/mentionable-users', [PageMentionController::class, 'index'])
+            ->whereNumber('collection')->name('mentionable-users');
+
+        /* Comments on a page (docs/features/wiki-comments.md). Nested under the page because
+           a thread only means anything with one — and the collection is in the path because
+           permission to see a comment is the COLLECTION's to grant, not the page's. */
+        Route::get('/collections/{collection}/pages/{page}/comments', [PageCommentController::class, 'index'])
+            ->whereNumber(['collection', 'page'])->name('pages.comments.index');
+        Route::post('/collections/{collection}/pages/{page}/comments', [PageCommentController::class, 'store'])
+            ->whereNumber(['collection', 'page'])->name('pages.comments.store');
+        Route::post('/collections/{collection}/pages/{page}/comments/anchors', [PageCommentController::class, 'anchors'])
+            ->whereNumber(['collection', 'page'])->name('pages.comments.anchors');
+        Route::post('/collections/{collection}/pages/{page}/comments/{thread}/replies', [PageCommentController::class, 'reply'])
+            ->whereNumber(['collection', 'page', 'thread'])->name('pages.comments.reply');
+        Route::post('/collections/{collection}/pages/{page}/comments/{thread}/resolve', [PageCommentController::class, 'resolve'])
+            ->whereNumber(['collection', 'page', 'thread'])->name('pages.comments.resolve');
+        Route::patch('/collections/{collection}/pages/{page}/comments/{thread}/messages/{comment}', [PageCommentController::class, 'update'])
+            ->whereNumber(['collection', 'page', 'thread', 'comment'])->name('pages.comments.update');
+        Route::delete('/collections/{collection}/pages/{page}/comments/{thread}/messages/{comment}', [PageCommentController::class, 'destroy'])
+            ->whereNumber(['collection', 'page', 'thread', 'comment'])->name('pages.comments.destroy');
+
         Route::get('/collections/{collection}/pages/{page}', [PageController::class, 'show'])
             ->whereNumber(['collection', 'page'])->name('pages.show');
         Route::patch('/collections/{collection}/pages/{page}', [PageController::class, 'update'])

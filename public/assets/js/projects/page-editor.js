@@ -19,6 +19,30 @@ function pgEsc(value) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+/**
+ * The sheets a wiki page can be laid out on (docs/features/wiki-page-format.md).
+ *
+ * Widths and heights are CSS pixels at 96dpi, which is the only unit the editor's frame can
+ * reason about: A4 210x297mm, Letter 8.5x11in, Legal 8.5x14in. `print` is the name the same
+ * sheet goes by in an `@page` rule, so a printed page comes out the size it was written on.
+ *
+ * `paperless` is the absence of a sheet — it carries no dimensions on purpose, and every
+ * branch below reads that as "no page, no breaks, just a document that scrolls".
+ */
+var PG_PAGE_FORMATS = {
+  a4: { label: 'A4', width: 794, height: 1123, print: 'A4' },
+  letter: { label: 'Letter', width: 816, height: 1056, print: 'letter' },
+  legal: { label: 'Legal', width: 816, height: 1344, print: 'legal' },
+  paperless: { label: 'Paperless', width: null, height: null, print: 'A4' }
+};
+
+/** The sheet a format name stands for, or null for paperless and for anything unknown. */
+function pgSheet(format) {
+  var sheet = PG_PAGE_FORMATS[format];
+
+  return sheet && sheet.height ? sheet : null;
+}
+
 function pgJoditReady() {
   return typeof window !== 'undefined' && typeof window.Jodit !== 'undefined';
 }
@@ -60,6 +84,27 @@ var PgEditor = {
      * document, and nothing the document carries can leak out onto the app.
      */
     documentView: { type: Boolean, default: true },
+    /**
+     * Which sheet the document view lays the text on
+     * (docs/features/wiki-page-format.md).
+     *
+     * 'a4' | 'letter' | 'legal' — a page of that size, with a visible boundary wherever the
+     * text runs past the bottom of one and continues on the next — or 'paperless', which
+     * removes the sheet altogether and leaves one continuous scrolling document.
+     *
+     * Changing it re-styles the frame IN PLACE (see applyPageFormat): the editor is never
+     * rebuilt, so nothing typed and nothing selected is lost to picking a paper size.
+     * Ignored entirely when `documentView` is false — a field has no page to be.
+     */
+    pageFormat: { type: String, default: 'a4' },
+    /**
+     * How wide the text runs when there is no sheet to hold it (paperless).
+     *
+     * A paperless document still needs a measure — full-window text is unreadable — so it
+     * follows the content width the screen configures rather than a paper size. Ignored by
+     * every other format, which take their width from the sheet itself.
+     */
+    contentWidth: { type: String, default: '820px' },
     /**
      * A trimmed toolbar, as Jodit's `buttons` string.
      *
@@ -118,7 +163,8 @@ var PgEditor = {
       options.iframe = true;
       // APPENDED to Jodit's own iframe stylesheet, never replacing it: the defaults carry the
       // editor's base typography, and the page-break plugin appends its rules the same way.
-      options.iframeStyle = (window.Jodit.defaultOptions.iframeStyle || '') + this.pageStyle();
+      options.iframeStyle = (window.Jodit.defaultOptions.iframeStyle || '') + this.pageStyle()
+        + this.formatStyle(this.pageFormat);
     }
 
     this.jodit = window.Jodit.make(this.$refs.area, options);
@@ -132,6 +178,9 @@ var PgEditor = {
     bus.on('change', function () {
       clearTimeout(self._syncTimer);
       self._syncTimer = setTimeout(function () { self.emitValue(); }, 120);
+      // A sheet grows as it is written on — see resizeFrame for why Jodit's own auto-resize
+      // cannot be relied on here.
+      self.resizeFrame();
     });
 
     bus.on('blur', function () {
@@ -142,6 +191,7 @@ var PgEditor = {
 
     this.applyOurIcons();
     this.relocateToolbar();
+    this.applyPageFormat();
     this.attachMentions();
 
     // Content LAST, after the listeners — the same ordering lesson <wi-editor> records: a
@@ -168,6 +218,8 @@ var PgEditor = {
       if (!this.jodit || this.isFocused()) return;
       if (next !== this.html()) this.setHtml(next || '');
     },
+    // A new paper size is applied to the frame that is already open — see applyPageFormat.
+    pageFormat: function () { this.applyPageFormat(); },
     disabled: function (next) {
       // Archiving a page makes it read-only without remounting the editor.
       try {
@@ -211,20 +263,19 @@ var PgEditor = {
     },
 
     /**
-     * The sheet, as CSS injected into the document's own frame.
+     * The document's typography, as CSS injected into its own frame.
      *
-     * A4 at 96dpi is 794×1123px; the min-height means an empty document still looks like a
-     * page rather than a sliver. Typography lives here rather than in pages.css because the
-     * document is inside an iframe — the app's stylesheets cannot reach it, which is the
-     * point of the mode.
+     * Typography lives here rather than in pages.css because the document is inside an iframe
+     * — the app's stylesheets cannot reach it, which is the point of the mode.
+     *
+     * What is NOT here is the sheet: its width, height, margins and page boundaries change
+     * with the chosen format, so they are formatStyle()'s alone. Stating a size in both places
+     * is how the two drift apart, and the one that loses is whichever is written first.
      */
     pageStyle: function () {
       return [
         'html{background:#f3f4f6;padding:0;}',
         'body{',
-        'background:#fff;max-width:794px;min-height:1123px;',
-        'margin:24px auto 64px;padding:56px 64px;',
-        'box-shadow:0 1px 3px rgba(0,0,0,.08),0 8px 24px rgba(0,0,0,.06);',
         'font-family:Inter,ui-sans-serif,system-ui,sans-serif;font-size:15px;line-height:1.75;color:#1f2328;',
         '}',
         'h1{font-size:28px;font-weight:700;margin:28px 0 8px;}',
@@ -242,6 +293,137 @@ var PgEditor = {
         'th,td{border:1px solid #e5e7eb;padding:8px 10px;text-align:left;vertical-align:top;}',
         'th{background:#f6f7f8;font-weight:600;}'
       ].join('');
+    },
+
+    /**
+     * The sheet the text is laid out on, as CSS for the document's frame
+     * (docs/features/wiki-page-format.md).
+     *
+     * PAGED (a4 / letter / legal) — the body IS the stack of sheets: one white column of the
+     * format's width, with a boundary line drawn at every multiple of its height. The lines
+     * come from a repeating background rather than from real page elements, because the
+     * document is one continuous contenteditable — splitting it into per-page elements is what
+     * costs you the caret, the selection and every multi-page table. `background-origin` is
+     * border-box so the first boundary is measured from the top of the sheet, not from below
+     * its top margin, and `min-height` keeps an empty document a full page rather than a
+     * sliver.
+     *
+     * Text is therefore free to sit across a boundary while you write: the line says where
+     * this page ends, and the @media print block below is what actually breaks the paper.
+     *
+     * PAPERLESS — no width, no height, no boundaries. One continuous scrolling document held
+     * only to the configured content width. It still PRINTS on a sheet: `paperless` describes
+     * how the page is written, not what comes out of a printer.
+     */
+    formatStyle: function (format) {
+      var sheet = pgSheet(format);
+      var print = (PG_PAGE_FORMATS[format] || PG_PAGE_FORMATS.a4).print;
+
+      if (!sheet) {
+        // Still !important, and still for Jodit's inline `min-height` — a document that has
+        // just come off Legal carries an inline 1344px, and without the override a paperless
+        // page keeps the height of the sheet it no longer has. The floor is the editor's own
+        // minHeight, so an empty paperless page is a comfortable writing area rather than one
+        // line, and it grows with whatever is written into it.
+        var floor = parseInt(this.minHeight, 10) || 420;
+
+        return [
+          'body{',
+          'background:#fff;box-shadow:none;',
+          'width:auto;max-width:' + this.contentWidth + ';min-height:' + floor + 'px!important;',
+          'margin:0 auto;padding:32px 24px 25vh;',
+          '}',
+          '@media print{@page{size:' + print + ';margin:20mm;}',
+          'body{max-width:none;margin:0;padding:0;}}'
+        ].join('');
+      }
+
+      // The sheet is white; the boundary is the last pixel of each page-height tile, so the
+      // tiles repeat down the document for as long as the text does.
+      var tile = 'linear-gradient(to bottom,transparent calc(100% - 1px),#d7dbe0 calc(100% - 1px))';
+
+      return [
+        'body{',
+        'background:#fff ' + tile + ' repeat-y 0 0/100% ' + sheet.height + 'px;',
+        'background-origin:border-box;',
+        // !important, and only here: Jodit's auto-resize writes its own `min-height` INLINE on
+        // the body, sized to the iframe it just measured. Without the override the sheet
+        // collapses to the height of whatever has been typed so far and there is never a page
+        // to break. Forcing it the other way round is also what makes the frame grow: Jodit
+        // resizes the iframe to the document's scrollHeight, which a full sheet now sets.
+        'width:' + sheet.width + 'px;max-width:100%;min-height:' + sheet.height + 'px!important;',
+        'margin:24px auto 64px;padding:56px 64px;',
+        'box-shadow:0 1px 3px rgba(0,0,0,.08),0 8px 24px rgba(0,0,0,.06);',
+        '}',
+        // A break the writer inserted deliberately reads as a boundary too, and prints as one.
+        '.jodit_page_break,.pg-page-break{',
+        'page-break-after:always;break-after:page;',
+        'border:0;border-top:1px dashed #c9ced6;margin:24px 0;height:0;',
+        '}',
+        '@media print{@page{size:' + print + ';margin:0;}',
+        'html{background:none;}',
+        'body{width:auto;min-height:0;margin:0;padding:56px 64px;background:#fff;box-shadow:none;}}'
+      ].join('');
+    },
+
+    /**
+     * Apply the current format to the frame that is ALREADY OPEN.
+     *
+     * The rules go into one style element the editor owns, replaced in place — so changing the
+     * paper size is a stylesheet swap, never a rebuild. Nothing typed, nothing selected and no
+     * undo history is lost to picking a format, which is the whole requirement: the document
+     * must not reload or reset.
+     */
+    applyPageFormat: function () {
+      if (!this.documentView || !this.jodit) return;
+
+      try {
+        var body = this.jodit.editor;
+        var doc = (body && body.ownerDocument) || this.jodit.ed;
+        if (!doc || !doc.head) return;
+
+        var tag = doc.getElementById('pg-page-format');
+        if (!tag) {
+          tag = doc.createElement('style');
+          tag.id = 'pg-page-format';
+          // Appended last so it wins over the same rules in Jodit's own iframe stylesheet,
+          // which carried the format the editor was first built with.
+          doc.head.appendChild(tag);
+        }
+
+        tag.textContent = this.formatStyle(this.pageFormat);
+
+        // A new sheet is a new height, and the frame around it has to follow — on the next
+        // frame, once the browser has laid the new rules out.
+        var self = this;
+        setTimeout(function () { self.resizeFrame(); }, 0);
+      } catch (e) { /* the document keeps the format it was built with, which still reads */ }
+    },
+
+    /**
+     * Size the frame to the sheet inside it.
+     *
+     * Jodit auto-resizes its iframe to the document, which is exactly what is wanted — but it
+     * measures on its own schedule and, once the sheet is taller than the text, stops agreeing
+     * that anything changed. The frame then stays the height of the LAST paragraph and the
+     * page below it is simply not drawn, so there is no page to break.
+     *
+     * The formula is Jodit's own — the document body plus its vertical margins — so the two
+     * never fight: whichever runs last computes the same number.
+     */
+    resizeFrame: function () {
+      if (!this.documentView || !this.jodit) return;
+
+      try {
+        var frame = this.jodit.iframe;
+        var body = this.jodit.editor;
+        if (!frame || !body || !body.ownerDocument.defaultView) return;
+
+        var box = body.ownerDocument.defaultView.getComputedStyle(body);
+        var margins = (parseInt(box.marginTop, 10) || 0) + (parseInt(box.marginBottom, 10) || 0);
+
+        frame.style.height = (body.offsetHeight + margins) + 'px';
+      } catch (e) { /* the frame keeps the height Jodit gave it */ }
     },
 
     /**

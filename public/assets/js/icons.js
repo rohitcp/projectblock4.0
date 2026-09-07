@@ -244,6 +244,10 @@ var PB_ICONS = {
 "fa": "eye",
 "svg": "<path d=\"M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linejoin=\"round\"/><circle cx=\"12\" cy=\"12\" r=\"3\" stroke=\"currentColor\" stroke-width=\"1.7\"/>"
     },
+    "eye-slash": {
+"fa": "eye-slash",
+"svg": "<path d=\"M3 3l18 18\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\"/><path d=\"M10.6 5.2A9.9 9.9 0 0112 5c6.5 0 10 7 10 7a17 17 0 01-3.3 4.1M6.5 6.6A17 17 0 002 12s3.5 7 10 7a9.6 9.6 0 004.2-.9\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/><path d=\"M9.9 9.9a3 3 0 004.2 4.2\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\"/>"
+    },
     "file-lines": {
 "fa": "file-lines",
 "svg": "<path d=\"M8 3h6l4 4v13a1 1 0 01-1 1H8a1 1 0 01-1-1V4a1 1 0 011-1z\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linejoin=\"round\"/><path d=\"M14 3v4h4M9.5 12h5M9.5 15.5h5\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>"

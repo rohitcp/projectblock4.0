@@ -85,8 +85,13 @@
           <label class="block text-[13px] font-medium text-ink mb-1.5" for="password">Password</label>
           <div class="relative">
             <input id="password" name="password" type="password" placeholder="Enter password" class="pb-input has-suffix" />
+            {{-- BOTH states rendered, one hidden. The toggle swaps a class rather than
+                 rewriting the button's markup: pb_icon() emits a Font Awesome glyph or an
+                 inline SVG depending on config/icons.php, and JavaScript that builds one of
+                 those by hand is JavaScript that is wrong for the other set. --}}
             <button id="pw-toggle" type="button" class="absolute right-3 top-1/2 -translate-y-1/2 text-faint hover:text-sub" title="Show password" aria-label="Show password">
-              {!! pb_icon('eye-open', 18) !!}
+              <span data-pw-show>{!! pb_icon('eye-open', 18) !!}</span>
+              <span data-pw-hide class="hidden">{!! pb_icon('eye-slash', 18) !!}</span>
             </button>
           </div>
           <button type="button" id="forgot-btn" class="inline-block mt-2 text-[13px] text-link font-medium hover:underline">Forgot your password?</button>
@@ -125,7 +130,6 @@
       var pwBlock = document.getElementById('pw-block');
       var pw = document.getElementById('password');
       var pwToggle = document.getElementById('pw-toggle');
-      var eye = document.getElementById('eye-open');
       var btn = document.getElementById('continue-btn');
       var codeBtn = document.getElementById('code-btn');
       var forgot = document.getElementById('forgot-btn');
@@ -178,9 +182,9 @@
         var show = pw.type === 'password';
         pw.type = show ? 'text' : 'password';
         pwToggle.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
-        eye.innerHTML = show
-          ? '<path d="M3 3l18 18" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M10.6 5.2A9.9 9.9 0 0112 5c6.5 0 10 7 10 7a17 17 0 01-3.3 4.1M6.5 6.6A17 17 0 002 12s3.5 7 10 7a9.6 9.6 0 004.2-.9" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M9.9 9.9a3 3 0 004.2 4.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>'
-          : '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.7"/>';
+        pwToggle.setAttribute('title', show ? 'Hide password' : 'Show password');
+        pwToggle.querySelector('[data-pw-show]').classList.toggle('hidden', show);
+        pwToggle.querySelector('[data-pw-hide]').classList.toggle('hidden', !show);
       });
 
       btn.addEventListener('click', function () {

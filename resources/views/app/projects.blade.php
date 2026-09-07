@@ -43,11 +43,13 @@
         {!! pb_icon('grid', 18) !!}
         <span class="text-[10px] text-center leading-tight">Projects</span>
       </a>
-      <a href="{{ route('settings.general') }}" title="Workspace settings"
-         class="mt-auto flex flex-col items-center gap-1 w-full px-0.5 py-2 rounded-lg text-sub hover:bg-hover hover:text-ink">
-        {!! pb_icon('gear-outline', 19) !!}
-        <span class="text-[10px] text-center leading-tight">Settings</span>
-      </a>
+      @if (auth()->user()->currentWorkspace && auth()->user()->can('manageSettings', auth()->user()->currentWorkspace))
+        <a href="{{ route('settings.general') }}" title="Workspace settings"
+           class="mt-auto flex flex-col items-center gap-1 w-full px-0.5 py-2 rounded-lg text-sub hover:bg-hover hover:text-ink">
+          {!! pb_icon('gear-outline', 19) !!}
+          <span class="text-[10px] text-center leading-tight">Settings</span>
+        </a>
+      @endif
     </nav>
 
     <div id="sidebar-backdrop" class="hidden lg:hidden fixed inset-0 bg-black/30 z-30"></div>

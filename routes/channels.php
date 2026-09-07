@@ -1,6 +1,8 @@
 <?php
 
 use App\Models\HelpCenterSpace;
+use App\Models\WikiCollection;
+use App\Models\WikiPage;
 use App\Models\WorkspaceMembership;
 use Illuminate\Support\Facades\Broadcast;
 
@@ -81,5 +83,54 @@ Broadcast::channel(
             ->find($spaceId);
 
         return $space !== null && $user->can('view', $space);
+    },
+);
+
+/**
+ * `private-tenant.{tenantId}.wiki.page.{pageId}` — one page's live comment stream
+ * (docs/features/wiki-comments.md).
+ *
+ * The PAGE and not the person, for the same reason the Space channel is the Space: a comment
+ * concerns whoever has that page open, which is usually several people and never only its
+ * author.
+ *
+ * Three checks, the same three the Space channel earns:
+ *
+ *  - an ACTIVE member of that workspace. Somebody removed from a workspace with a tab still
+ *    open must stop hearing about it; a socket authorized once would otherwise keep delivering
+ *    until they reloaded;
+ *  - the page actually belongs to that workspace — without it, a member of workspace A could
+ *    listen on `tenant.A.wiki.page.{a page in B}` and be told about B's conversations;
+ *  - and the COLLECTION's own read rule, so who may listen is decided by the same code that
+ *    decides who may open the page (CLAUDE.md §12). Reading a comment is reading the page.
+ *
+ * `withoutGlobalScopes()` is required rather than tidy: a websocket subscribe carries no
+ * tenancy context, so `BelongsToTenant`'s scope would find nothing and every subscribe would be
+ * refused. The `tenant_id` is then checked by hand, which is what that scope would have done.
+ */
+Broadcast::channel(
+    'tenant.{tenantId}.wiki.page.{pageId}',
+    function ($user, string $tenantId, string $pageId) {
+        $member = WorkspaceMembership::query()
+            ->where('workspace_id', $tenantId)
+            ->where('user_id', $user->id)
+            ->where('status', WorkspaceMembership::STATUS_ACTIVE)
+            ->exists();
+
+        if (! $member) {
+            return false;
+        }
+
+        $page = WikiPage::withoutGlobalScopes()
+            ->where('tenant_id', $tenantId)
+            ->find($pageId);
+
+        if ($page === null) {
+            return false;
+        }
+
+        $collection = WikiCollection::withoutGlobalScopes()->find($page->wiki_collection_id);
+
+        return $collection !== null && $collection->openableBy($user);
     },
 );

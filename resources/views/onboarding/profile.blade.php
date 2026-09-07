@@ -80,7 +80,11 @@
               <label class="block text-[13px] text-sub mb-1.5">Set a password</label>
               <div class="relative">
                 <input name="password" type="password" placeholder="Set a password" class="pw-input pb-input has-suffix {{ $errors->has('password') ? 'is-error' : '' }}" />
-                <button type="button" class="pw-eye absolute right-3 top-1/2 -translate-y-1/2 text-faint hover:text-sub">{!! pb_icon('eye', 17) !!}</button>
+                <button type="button" class="pw-eye absolute right-3 top-1/2 -translate-y-1/2 text-faint hover:text-sub" title="Show password" aria-label="Show password">
+                  {{-- Both states rendered, one hidden — see the toggle below. --}}
+                  <span data-pw-show>{!! pb_icon('eye-open', 17) !!}</span>
+                  <span data-pw-hide class="hidden">{!! pb_icon('eye-slash', 17) !!}</span>
+                </button>
               </div>
               @error('password')<p class="mt-1 text-[12px] text-danger">{{ $message }}</p>@enderror
 
@@ -121,7 +125,11 @@
               <label class="block text-[13px] text-sub mb-1.5">Confirm password</label>
               <div class="relative">
                 <input name="password_confirmation" type="password" placeholder="Confirm password" class="pw-input pb-input has-suffix" />
-                <button type="button" class="pw-eye absolute right-3 top-1/2 -translate-y-1/2 text-faint hover:text-sub">{!! pb_icon('eye', 17) !!}</button>
+                <button type="button" class="pw-eye absolute right-3 top-1/2 -translate-y-1/2 text-faint hover:text-sub" title="Show password" aria-label="Show password">
+                  {{-- Both states rendered, one hidden — see the toggle below. --}}
+                  <span data-pw-show>{!! pb_icon('eye-open', 17) !!}</span>
+                  <span data-pw-hide class="hidden">{!! pb_icon('eye-slash', 17) !!}</span>
+                </button>
               </div>
             </div>
           </div>
@@ -269,11 +277,21 @@
       render();
     })();
 
+    /* Show / hide password. The icon changes with it — it used to flip the input's type and
+       leave an open eye sitting there whatever the state, which says the opposite of what is
+       on screen. Both icons are in the button and the class decides which one shows, so this
+       stays correct whichever set config/icons.php is on. */
     document.querySelectorAll('.pw-eye').forEach(function (eye) {
       eye.addEventListener('click', function (e) {
         e.preventDefault();
         var inp = eye.parentElement.querySelector('.pw-input');
-        inp.type = inp.type === 'password' ? 'text' : 'password';
+        var show = inp.type === 'password';
+
+        inp.type = show ? 'text' : 'password';
+        eye.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+        eye.setAttribute('title', show ? 'Hide password' : 'Show password');
+        eye.querySelector('[data-pw-show]').classList.toggle('hidden', show);
+        eye.querySelector('[data-pw-hide]').classList.toggle('hidden', !show);
       });
     });
 
