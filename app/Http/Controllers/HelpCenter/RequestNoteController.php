@@ -285,6 +285,7 @@ class RequestNoteController extends Controller
             where: 'an internal note',
             excerpt: (string) $this->richText->excerpt($html, (int) config('projects.excerpt.email')),
             url: $url,
+            actor: \App\Mail\EmailActor::fromUser($actor, 'Someone'),
         );
 
         foreach ($recipients as $user) {

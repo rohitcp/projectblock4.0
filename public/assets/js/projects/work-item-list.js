@@ -42,6 +42,17 @@ var WiList = {
      */
     labelsEnabled: { type: Boolean, default: true },
     /**
+     * Does this list mix work items from DIFFERENT projects (Your Work, Inbox)?
+     *
+     * Only then does a row need to say which project it came from. It defaults to false and
+     * is passed explicitly, rather than being inferred from whether the row payload happens
+     * to carry a `project` — that inference is what put a project chip on a single-project
+     * grid: `card()` includes `project` whenever the relation is loaded, and several
+     * notifiers `loadMissing('project')` while doing their own work, so a row came back from
+     * an inline edit carrying a chip its neighbours did not have.
+     */
+    multiProject: { type: Boolean, default: false },
+    /**
      * One group holding everything, instead of one per state.
      *
      * For a list that spans projects (Your Work): two projects' "In Progress" are different
@@ -263,7 +274,10 @@ var WiList = {
           '' + wiIcon('xmark', 15) + '</button>';
       }
 
-      return wiMetaCell(d, { edit: this.canEdit, action: action, labels: this.labelsEnabled });
+      return wiMetaCell(d, {
+        edit: this.canEdit, action: action, labels: this.labelsEnabled,
+        multiProject: this.multiProject,
+      });
     }
   },
   template: '<div ref="grid" class="wi-grid"></div>'

@@ -13,3 +13,5 @@
 <link rel="stylesheet" href="{{ pb_asset('assets/css/work-items.css') }}" />
 <script defer src="{{ pb_asset('assets/js/projects/work-item-ui.js') }}"></script>
 <script defer src="{{ pb_asset('assets/js/projects/date-picker.js') }}"></script>
+
+@include('partials.image-zoom')

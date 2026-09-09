@@ -12,13 +12,28 @@
           'heading' => 'Invitation expired',
           'body' => 'This invitation is no longer valid. Please contact the workspace administrator for a new invitation.',
       ],
+      /*
+       * `revoked` and `unknown` MUST stay word-for-word identical (§73): an attacker trying
+       * tokens must not be able to tell "this invitation was cancelled" from "no such
+       * invitation", or the page becomes a way to enumerate them.
+       *
+       * What changed is what they both SAY. The copy used to assert the invitation "has been
+       * cancelled", which is one of the three things that actually land here and the least
+       * likely: resending an invitation issues a NEW token and retires the old one, so every
+       * earlier email for that person now leads here. Telling somebody holding a superseded
+       * link that their invitation was cancelled is both wrong and alarming, and it sends
+       * them to ask an administrator about something nobody did.
+       *
+       * The wording below is true of all three cases without distinguishing them, and it
+       * names the fix for the common one first.
+       */
       'revoked' => [
-          'heading' => 'Invitation no longer available',
-          'body' => 'This workspace invitation has been cancelled.',
+          'heading' => 'Invitation link no longer valid',
+          'body' => 'If this invitation was sent more than once, only the most recent email works — please open the latest one. Otherwise, ask the workspace administrator to send a new invitation.',
       ],
       'unknown' => [
-          'heading' => 'Invitation no longer available',
-          'body' => 'This workspace invitation has been cancelled.',
+          'heading' => 'Invitation link no longer valid',
+          'body' => 'If this invitation was sent more than once, only the most recent email works — please open the latest one. Otherwise, ask the workspace administrator to send a new invitation.',
       ],
       'accepted' => [
           'heading' => 'This invitation has already been accepted',

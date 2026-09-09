@@ -34,6 +34,7 @@ class MentionNotifier
     public function __construct(
         private readonly RichTextSanitizer $richText,
         private readonly InboxNotifier $inbox,
+        private readonly WorkItemCommentNotifier $commentNotifier,
     ) {}
 
     /**
@@ -48,6 +49,24 @@ class MentionNotifier
         ?int $commentId = null,
         ?WorkItemComment $comment = null,
     ): void {
+        /*
+         * Somebody who muted this work item hears nothing — a mention included.
+         *
+         * That is not an oversight, it is what separates Mute from the level beside it:
+         * "Mentions & Replies Only" already exists, so if muting still delivered mentions the
+         * two settings would do the same thing. Mute is the one way to be named on an item
+         * and stay quiet, which is the whole reason somebody reaches for it.
+         *
+         * Applied before the Inbox write, not only before the mail: muting that still filled
+         * the bell would be mute in name only.
+         */
+        $muted = $this->commentNotifier->mutedUserIds($item);
+        $users = $users->reject(fn (User $user) => $muted->contains((int) $user->id));
+
+        if ($users->isEmpty()) {
+            return;
+        }
+
         // The Inbox is the in-app record and is written ALWAYS (§36): turning email off must
         // not turn the Inbox off, so this happens before — and independently of — delivery.
         $this->inbox->mentioned($users, $item, $actor, $sourceType, $html, $comment);
@@ -89,6 +108,7 @@ class MentionNotifier
             description: $sourceType === Mention::SOURCE_COMMENT
                 ? $this->richText->excerpt($item->description, (int) config('projects.excerpt.email'))
                 : null,
+            actor: \App\Mail\EmailActor::fromUser($actor, 'Someone'),
         );
 
         $emails = $recipients->pluck('email')->all();

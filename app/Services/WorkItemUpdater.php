@@ -161,6 +161,7 @@ class WorkItemUpdater
                 updatedAt: now()->toDayDateTimeString(),
                 url: route('projects.work-items.show', ['project' => $project->id, 'workItem' => $item->id]),
                 changes: $changes,
+                actor: \App\Mail\EmailActor::fromUser($actor),
             ));
         }
     }

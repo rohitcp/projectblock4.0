@@ -37,6 +37,7 @@ class MembersSettingsController extends SettingsController
                 'role' => route('settings.members.role', ['membership' => '__ID__']),
                 'remove' => route('settings.members.remove', ['membership' => '__ID__']),
                 'revoke' => route('settings.members.revoke', ['invitation' => '__ID__']),
+                'resend' => route('settings.members.resend', ['invitation' => '__ID__']),
             ],
         ]);
     }
@@ -97,6 +98,70 @@ class MembersSettingsController extends SettingsController
         return response()->json(['ok' => true, 'pending' => $this->pendingInvites()]);
     }
 
+    /**
+     * POST /settings/members/invites/{invitation}/resend — send a pending invitation again.
+     *
+     * The counterpart to Revoke, and the answer to the only other thing that goes wrong with an
+     * invitation: it never arrived. Without it the sole remedy was to revoke and re-invite,
+     * which is two destructive-looking steps for "try that email again".
+     *
+     * `WorkspaceInviter::resend()` issues a FRESH token and re-stamps the expiry — only the
+     * hash of the old one was ever stored, so the original link cannot be re-sent, and a
+     * resend deliberately extends the window rather than mailing a link about to expire.
+     * It returns false for an invitation that is no longer acceptable (already accepted,
+     * revoked, or expired past recovery), which is a 422 rather than a silent success.
+     */
+    public function resend(WorkspaceInvitation $invitation, WorkspaceInviter $inviter): JsonResponse
+    {
+        $this->guardManage();
+        $this->assertInvitationBelongsToWorkspace($invitation);
+
+        abort_unless(
+            $inviter->resend($this->workspace(), Auth::user(), $invitation),
+            422,
+            'That invitation can no longer be resent. Revoke it and invite them again.',
+        );
+
+        return response()->json([
+            'ok' => true,
+            'pending' => $this->pendingInvites(),
+            'message' => 'Invitation sent again to '.$this->inviteeLabel($invitation).'.',
+        ]);
+    }
+
+    /**
+     * The invited person's real name, or null when we do not have one.
+     *
+     * NOT `displayName()`: that falls back to the local part of the address, which is neither
+     * a name nor an address and reads like a truncation. Null here means "we hold no name",
+     * which is what lets the caller choose the address instead.
+     */
+    private function inviteeName(WorkspaceInvitation $invitation): ?string
+    {
+        $user = $invitation->user;
+        $name = trim((string) ($user?->display_name ?: $user?->full_name ?: ''));
+
+        return $name !== '' ? $name : null;
+    }
+
+    /** What to call the invited person in a confirmation message: their name, else the address. */
+    private function inviteeLabel(WorkspaceInvitation $invitation): string
+    {
+        return $this->inviteeName($invitation) ?? (string) $invitation->email;
+    }
+
+    /**
+     * Guard: the invitation must belong to the active workspace.
+     *
+     * `WorkspaceInvitation` is tenant-scoped (CLAUDE.md D6), so route-model binding already
+     * confines it — this is the belt to that braces, matching what `revoke` relies on and what
+     * `assertBelongsToWorkspace` does for the central membership table beside it.
+     */
+    private function assertInvitationBelongsToWorkspace(WorkspaceInvitation $invitation): void
+    {
+        abort_unless((string) $invitation->tenant_id === (string) $this->workspace()->id, 404);
+    }
+
     /** Guard: the membership must belong to the active workspace (memberships are central). */
     private function assertBelongsToWorkspace(WorkspaceMembership $membership): void
     {
@@ -136,12 +201,16 @@ class MembersSettingsController extends SettingsController
     {
         return WorkspaceInvitation::query()
             ->where('status', WorkspaceInvitation::STATUS_PENDING)
-            ->with('inviter')
+            ->with(['inviter', 'user'])
             ->latest()
             ->get()
             ->map(fn (WorkspaceInvitation $i) => [
                 'id' => $i->id,
                 'email' => $i->email,
+                // Their name when the invited address already has an account, null when it
+                // does not — most invitations go to somebody who has not signed up yet, and
+                // for them the address genuinely IS the only identity we hold.
+                'name' => $this->inviteeName($i),
                 'role' => $i->role,
                 'invited' => optional($i->created_at)->format('M d, Y'),
                 'by' => $i->inviter?->displayName() ?? '—',

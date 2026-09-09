@@ -6,8 +6,13 @@ use App\Models\Project;
 use App\Models\ProjectActivity;
 use App\Models\ProjectMember;
 use App\Models\User;
+use App\Mail\EmailActor;
+use App\Mail\ProjectMemberRemovedMail;
+use App\Models\Workspace;
 use App\Models\WorkspaceMembership;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -88,6 +93,10 @@ class ProjectMemberManager
             $this->assertNotLastAdmin($project);
         }
 
+        // Read BEFORE the delete. Afterwards the row is gone and `$member->user` resolves to
+        // nothing, so the email would have no one to name and nowhere to go.
+        $removed = $member->user;
+
         DB::transaction(function () use ($project, $member, $actor) {
             // A removed member cannot stay on as project lead.
             if ($member->user_id === $project->lead_user_id) {
@@ -97,6 +106,56 @@ class ProjectMemberManager
             $this->log($project, $actor, ProjectActivity::EVENT_MEMBER_REMOVED, $member, $member->role, null);
             $member->delete();
         });
+
+        // AFTER the commit, never inside it: a mail queued in the transaction would still be
+        // sent if the transaction then rolled back, telling somebody they had lost access they
+        // still have.
+        $this->sendRemovedEmail($project, $actor, $removed);
+    }
+
+    /**
+     * Tell somebody their project access was withdrawn — the counterpart to the email they got
+     * when they were added.
+     *
+     * Three cases are deliberately silent:
+     *
+     *   - a PENDING invitation, which has no user behind it. Withdrawing an invitation somebody
+     *     never accepted is not a change to anything they had, and "you have been removed from
+     *     a project" would be the first they heard of the project at all;
+     *   - somebody removing THEMSELVES, who already knows;
+     *   - a user row with no address.
+     *
+     * Delivery failure is logged and swallowed, on the same rule the add email uses: they ARE
+     * removed, the screen already says so, and throwing here would report a completed removal
+     * as a failure.
+     */
+    private function sendRemovedEmail(Project $project, ?User $actor, ?User $removed): void
+    {
+        if (! $removed || ! $removed->email) {
+            return;
+        }
+
+        if ($actor && (int) $actor->id === (int) $removed->id) {
+            return;
+        }
+
+        try {
+            $workspace = Workspace::query()->withoutGlobalScopes()->find($project->tenant_id);
+
+            Mail::to($removed->email)->send(new ProjectMemberRemovedMail(
+                project: $project,
+                workspaceName: (string) ($workspace->name ?? ''),
+                removedByName: $actor?->displayName() ?? 'An administrator',
+                recipientName: $removed->displayName(),
+                actor: EmailActor::fromUser($actor, 'An administrator'),
+            ));
+        } catch (\Throwable $e) {
+            Log::warning('project.member.removed_email_failed', [
+                'project_id' => $project->id,
+                'user_id' => $removed->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     /**

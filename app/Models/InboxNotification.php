@@ -24,8 +24,22 @@ class InboxNotification extends Model
     /** Somebody named you in a description or a comment (§7). */
     public const TYPE_MENTION = 'mention';
 
-    /** Phase 1's two streams. §33 lists seven more the column is deliberately open for. */
-    public const TYPES = [self::TYPE_ASSIGNMENT, self::TYPE_MENTION];
+    /**
+     * Somebody replied to a comment YOU wrote.
+     *
+     * Its own type rather than a `comment` with a flag: a reply to you is a direct
+     * notification — in-app and email, like a mention — while a comment on an item you merely
+     * watch is not. Two names for two different levels of "this concerns you".
+     */
+    public const TYPE_REPLY = 'reply';
+
+    /** Somebody commented on a work item you are assigned, participating in, or watching. */
+    public const TYPE_COMMENT = 'comment';
+
+    /** §33 lists more the column is deliberately open for. */
+    public const TYPES = [
+        self::TYPE_ASSIGNMENT, self::TYPE_MENTION, self::TYPE_REPLY, self::TYPE_COMMENT,
+    ];
 
     protected $fillable = [
         'tenant_id', 'recipient_id', 'actor_id', 'type', 'project_id', 'work_item_id',

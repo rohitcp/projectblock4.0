@@ -101,3 +101,9 @@ Route::get('/session/expired', [SessionController::class, 'expired'])->name('ses
 Route::get('/emaillog', [EmailLogController::class, 'index'])->name('dev.emaillog');
 Route::delete('/emaillog', [EmailLogController::class, 'destroyAll'])->name('dev.emaillog.destroy');
 Route::get('/emaillog/{email}', [EmailLogController::class, 'show'])->name('dev.emaillog.show');
+
+// ---- Dev-only email PREVIEWS (guarded to local env in the controller) ----
+// Renders every transactional email from the shared shell against sample data, so a change to
+// the shell can be checked against all of them at once rather than one workflow at a time.
+Route::get('/dev/emails', [\App\Http\Controllers\Dev\EmailPreviewController::class, 'index'])->name('dev.emails');
+Route::get('/dev/emails/{slug}', [\App\Http\Controllers\Dev\EmailPreviewController::class, 'show'])->name('dev.emails.show');

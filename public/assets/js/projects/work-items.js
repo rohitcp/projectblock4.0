@@ -556,6 +556,27 @@ function wiBlankForm(stateId, seed) {
 }
 
 /**
+ * A comparable snapshot of the create form, for "has anything been typed?".
+ *
+ * Compared against a freshly built blank form rather than tracked with a dirty flag, because
+ * every chip picker writes straight into `form` and a flag would need setting in fourteen
+ * places — one missed, and Discard throws away work without asking.
+ *
+ * `description` is normalised first: the rich-text editor reports an untouched body as markup
+ * (`<p><br></p>`), which is not a change anybody made, and comparing it raw would make every
+ * form dirty the moment the editor mounted.
+ */
+function wiFormPrint(form) {
+  var copy = JSON.parse(JSON.stringify(form || {}));
+
+  copy.title = String(copy.title || '').trim();
+  copy.description = String(copy.description || '')
+    .replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
+
+  return JSON.stringify(copy);
+}
+
+/**
  * The Work Items screen — grid, chip pickers, create modal and the work item drawer.
  *
  * A named component rather than an inline PB.boot argument, because it is no longer only its
@@ -805,7 +826,10 @@ var WorkItemsScreen = {
       priorities: Array.isArray(b.priorities) ? b.priorities : [],
       defaultStateId: b.defaultStateId || '',
       canCreate: !!b.canCreate,
-      canEdit: !!b.canEdit,
+      /* The PROJECT-wide answer: may this person edit anything here at all.
+         It is the ceiling the grid is given, and the fallback for a payload with no
+         per-item abilities. `canEdit` below narrows it to the item actually in focus. */
+      canEditAny: !!b.canEdit,
       canManageProject: !!b.canManageProject,
       /*
        * MULTI-PROJECT MODE (Your Work).
@@ -900,8 +924,15 @@ var WorkItemsScreen = {
       deleteConfirm: { open: false, item: null, busy: false },
       table: null,
       // Create modal
-      open: false, saving: false, createMore: false, errors: {},
-      // The state the modal was opened with — what "Create more" resets each new item to.
+      open: false, saving: false, errors: {},
+      /* Which button is mid-save: '' | 'save' | 'another'. A plain `saving` boolean cannot
+         say WHICH of the two was pressed, so both would read "Saving…" at once. Both are
+         disabled either way — that is what stops a double submission — but only the one that
+         was clicked changes its label. */
+      saveMode: '',
+      // Asks before throwing away a form somebody has typed into.
+      discardConfirm: false,
+      // The state the modal was opened with — what a fresh form resets to.
       seedStateId: '',
       // Set when the create modal was opened as "new sub-task" of the open work item.
       seedParentId: '',
@@ -1033,6 +1064,24 @@ var WorkItemsScreen = {
      * the chip on its rows just because the project above it in the list has them on. Computed
      * from `vocab`, so the ~20 template references throughout the drawer are unchanged.
      */
+    /**
+     * May the viewer edit THE ITEM CURRENTLY IN FOCUS?
+     *
+     * This used to be the project-wide flag, which is what let a Contributor see every editing
+     * control on a colleague's work item: the server refused the change, but the drawer had
+     * already offered it. The matrix is per item
+     * (docs/features/project-role-permissions.md §8), so this is too.
+     *
+     * The GRID is not gated by this — it is given `canEditAny` as a ceiling and decides per
+     * row from each row's own abilities, because a list shows many items at once and this
+     * answers for one.
+     */
+    canEdit: function () {
+      var it = this.drawerItem || this.rowMenu.item;
+      if (!it) return this.canEditAny;
+
+      return it.abilities ? !!it.abilities.update : this.canEditAny;
+    },
     labelsEnabled: function () { return this.vocab.labelsEnabled !== false; },
     cyclesEnabled: function () { return !!this.vocab.cyclesEnabled; },
     modulesEnabled: function () { return !!this.vocab.modulesEnabled; },
@@ -1088,6 +1137,19 @@ var WorkItemsScreen = {
     selectedEpic: function () {
       var id = String(this.form.epic_id || '');
       return this.vocab.epics.filter(function (e) { return String(e.id) === id; })[0] || null;
+    },
+    /**
+     * Has anything been entered that closing would lose?
+     *
+     * Measured against a form built exactly as this one was opened — same seed state, same
+     * parent — so arriving from a state group's "+" or from "new sub-task" does not read as
+     * a change the person made.
+     */
+    isDirty: function () {
+      var pristine = wiBlankForm(this.seedStateId, this.seed);
+      pristine.parent_id = this.seedParentId || '';
+
+      return wiFormPrint(this.form) !== wiFormPrint(pristine);
     },
     selectedLabels: function () {
       var ids = this.form.label_ids.map(String);
@@ -1315,6 +1377,29 @@ var WorkItemsScreen = {
       var resp = await this.react(this.endpoints.subscribe, {});
       if (resp) this.$pb.toast(resp.message);
     },
+    /* ---- Watch level (All activity / Mentions & replies / Mute) ----------------------
+       The bell beside this still toggles watching on and off; this menu chooses HOW MUCH,
+       for somebody already on the item. Two controls because they answer two questions, and
+       folding them into one made "stop watching" and "watch less" the same click. */
+    watchOptions: function () {
+      return [
+        { key: 'all', label: 'All activity', desc: 'Comments, replies, status and assignment' },
+        { key: 'mentions', label: 'Mentions & replies only', desc: 'Only when you are named or answered' },
+        { key: 'mute', label: 'Mute', desc: 'Nothing, including mentions' },
+      ];
+    },
+    watchLabel: function () {
+      var it = this.drawerItem;
+      if (!it || !it.subscribed) return 'Watch';
+      var found = this.watchOptions().filter(function (o) { return o.key === it.watch_level; })[0];
+
+      return found ? found.label : 'All activity';
+    },
+    setWatchLevel: async function (level) {
+      this.menu = '';
+      var resp = await this.react(this.endpoints.subscribe, { level: level });
+      if (resp) this.$pb.toast(resp.message);
+    },
 
     /** POST, then paint the item from the response — in the list as well as the drawer. */
     react: async function (endpoint, body) {
@@ -1329,6 +1414,7 @@ var WorkItemsScreen = {
         row.votes = resp.votes;
         row.my_vote = resp.my_vote;
         row.subscribed = resp.subscribed;
+        row.watch_level = resp.watch_level;
         // Voting writes an audit row, so the response carries the rebuilt feed: without this
         // the Activity / History / All tabs sit one click behind until the drawer reopens.
         if (resp.feed) this.feed = resp.feed;
@@ -1373,10 +1459,6 @@ var WorkItemsScreen = {
       var q = (this.rowQuery || '').toLowerCase();
       return this.vocab.labels.filter(function (l) { return !q || (l.name || '').toLowerCase().indexOf(q) > -1; });
     },
-    /** Palette offered when creating a label inline; the server picks one if none is set. */
-    labelColors: function () {
-      return ['#6366F1', '#EC4899', '#F59E0B', '#10B981', '#3B82F6', '#EF4444', '#8B5CF6', '#14B8A6'];
-    },
     /** Is the typed name already a label? Then "create" would fork the vocabulary. */
     labelExists: function (name) {
       var q = (name || '').trim().toLowerCase();
@@ -1387,7 +1469,8 @@ var WorkItemsScreen = {
         open: true,
         // Whatever was typed into the search is almost always the label being looked for.
         name: (this.rowQuery || '').trim(),
-        color: this.labelColors()[this.vocab.labels.length % this.labelColors().length],
+        // No colour until one is chosen — see the note on `saveNewLabel`'s `|| null`.
+        color: '',
         busy: false, error: ''
       };
     },
@@ -1400,7 +1483,7 @@ var WorkItemsScreen = {
       this.newLabel.busy = true; this.newLabel.error = '';
       try {
         var resp = await this.$pb.api(this.$pb.withId(this.endpoints.createLabel, item.id), {
-          method: 'POST', body: { name: name, color: this.newLabel.color }
+          method: 'POST', body: { name: name, color: this.newLabel.color || null }
         });
         // The project's vocabulary grew, so every picker on this screen should know — into
         // THAT project's list when the screen is showing several, or the label would appear
@@ -1610,8 +1693,33 @@ var WorkItemsScreen = {
      */
     toggleRowAssignee: function (m) {
       var it = this.rowMenu.item;
-      var ids = this.rowHasAssignee(m) ? [] : [m.id];
-      this.patchItem(it, { assignee_ids: ids }, true, ids.length ? 'Assignee updated.' : 'Assignee cleared.');
+      var clearing = this.rowHasAssignee(m);
+      var ids = clearing ? [] : [m.id];
+
+      /* Say what actually happened, by name.
+         "Assignee updated" was true of all three of these and told you which of them it was in
+         none of them — and the one that matters, handing work from one person to another, was
+         the one it hid. Read BEFORE the patch: `it.assignees` is the state being replaced. */
+      var previous = (it.assignees || [])[0];
+      var message = clearing
+        ? this.personName(m) + ' was removed from this work item.'
+        : (previous
+            ? 'This work item was reassigned to ' + this.personName(m) + '.'
+            : this.personName(m) + ' was assigned to this work item.');
+
+      this.patchItem(it, { assignee_ids: ids }, true, message);
+    },
+    /**
+     * What to call somebody in a confirmation message.
+     *
+     * `name` is what the picker they just clicked showed them, so the toast names the person
+     * the same way the row did — and it already falls back to a username server-side. The
+     * address is the last resort, for a payload with no name at all.
+     */
+    personName: function (person) {
+      if (!person) return 'Someone';
+
+      return String(person.name || person.email || 'Someone');
     },
     toggleRowLabel: function (l) {
       var it = this.rowMenu.item;
@@ -1881,8 +1989,33 @@ var WorkItemsScreen = {
         this.commentDelete.busy = false;
       }
     },
+    /**
+     * May the signed-in user do `ability` to this item?
+     *
+     * Reads the row's own `abilities` map, which the server fills per item — so two rows in
+     * the same list can legitimately disagree, which a screen-wide `canEdit` could not express.
+     * Defaults to the screen-wide flag for a payload that predates the map, so nothing that
+     * has not been migrated loses its controls.
+     */
+    may: function (ability, item) {
+      var it = item || this.rowMenu.item || this.drawerItem;
+      if (!it) return false;
+
+      return it.abilities ? !!it.abilities[ability] : !!this.canEdit;
+    },
+    /**
+     * May the viewer edit or delete THIS comment?
+     *
+     * Its author, or somebody who runs the project — the matrix's "moderate/delete other
+     * comments if required" for an Admin. `delete` on the item is the closest ability to
+     * "runs this project", and it is the same test the server applies in `guardComment`.
+     */
     canEditComment: function (comment) {
-      return comment.author && String(comment.author.id) === String(this.currentUserId);
+      if (comment.author && String(comment.author.id) === String(this.currentUserId)) {
+        return true;
+      }
+
+      return this.may('delete', this.drawerItem);
     },
 
     // ---------- Updates (§8) ----------
@@ -2733,9 +2866,33 @@ var WorkItemsScreen = {
       this.errors = {};
       this.menu = ''; this.parentOpen = false;
       this.memberQuery = ''; this.labelQuery = ''; this.parentQuery = ''; this.epicQuery = '';
+      this.newLabel = { open: false, name: '', color: '', busy: false, error: '' };
     },
-    closeCreate: function () { this.open = false; this.menu = ''; this.parentOpen = false; },
-    toggleMenu: function (name) { this.menu = this.menu === name ? '' : name; },
+    /**
+     * Leave the create form — the exit every route out of it goes through: Discard, the header
+     * X, and a click on the backdrop.
+     *
+     * Guarded centrally rather than on the Discard button alone. All three throw the same work
+     * away, and a stray backdrop click losing a filled-in form is the easiest of the three to
+     * do by accident; asking on one and not the others would just be inconsistent.
+     */
+    closeCreate: function () {
+      if (this.isDirty) { this.discardConfirm = true; return; }
+      this.forceClose();
+    },
+    /** Close for real, no questions — used once the answer is already known. */
+    forceClose: function () {
+      this.discardConfirm = false;
+      this.open = false; this.menu = ''; this.parentOpen = false;
+      this.newLabel.open = false;
+    },
+    toggleMenu: function (name) {
+      this.menu = this.menu === name ? '' : name;
+      // Closing a picker abandons a half-written label with it. Left open, reopening the
+      // menu would resume somebody else's abandoned draft — and the create row would be
+      // hidden behind it, which is the dead end this whole addition removes.
+      this.newLabel.open = false;
+    },
     // The calendar component owns its own view state, so opening is just a menu toggle.
     onDatePick: function (field, iso) { this.form[field] = iso; this.menu = ''; },
     onDateClear: function (field) { this.form[field] = ''; this.menu = ''; },
@@ -2765,9 +2922,63 @@ var WorkItemsScreen = {
     },
     isAssigned: function (m) { return this.form.assignee_ids.map(String).indexOf(String(m.id)) > -1; },
     isLabelled: function (l) { return this.form.label_ids.map(String).indexOf(String(l.id)) > -1; },
-    save: async function () {
+
+    /* ---- Creating a label from the Create form's picker -------------------------------
+       The grid's row menu has had this since labels shipped; the Create form had the same
+       picker without it, so a project with no labels yet offered "No labels yet" and no way
+       forward — the first label could only be made in Project Settings, and only by an admin.
+
+       Separate from `startNewLabel`/`saveNewLabel` above for one reason that matters: those
+       act on `rowMenu.item`, an existing work item, and post to a route that needs its id.
+       Here there is no item yet. The state object and the palette are shared, because only
+       one picker can be open at a time and two colour lists would drift apart. */
+    startNewFormLabel: function () {
+      this.newLabel = {
+        open: true,
+        // Whatever was typed into the search is almost always the label being looked for.
+        name: (this.labelQuery || '').trim(),
+        // No colour until one is chosen — see the note on `saveNewLabel`'s `|| null`.
+        color: '',
+        busy: false, error: ''
+      };
+    },
+    saveNewFormLabel: async function () {
+      var name = (this.newLabel.name || '').trim();
+      if (!name || this.newLabel.busy || !this.endpoints.createProjectLabel) return;
+
+      this.newLabel.busy = true; this.newLabel.error = '';
+      try {
+        var resp = await this.$pb.api(this.endpoints.createProjectLabel, {
+          method: 'POST', body: { name: name, color: this.newLabel.color || null }
+        });
+        // The project's vocabulary grew, so every picker on this screen should know — into
+        // THAT project's list when the screen is showing several, exactly as the row menu
+        // does it, or the label would appear under every project rather than its own.
+        if (resp.labels) {
+          if (this.activeProject) this.activeProject.labels = resp.labels;
+          else this.labels = resp.labels;
+        }
+        this.newLabel.open = false;
+        this.labelQuery = '';
+        // Tick it straight away. Somebody who just named a label meant to use it, and the
+        // form holds ids until save, so nothing is written to the server by this.
+        if (resp.label && !this.isLabelled(resp.label)) this.toggleLabel(resp.label);
+      } catch (e) { this.newLabel.error = this.$pb.firstError(e); }
+      this.newLabel.busy = false;
+    },
+    /**
+     * @param {boolean} again  keep going: save this one, then open a clean form for the next.
+     *
+     * One method for both buttons rather than two that drift: everything up to the response is
+     * identical, and `again` only decides what happens after it succeeded. It replaced a
+     * "Create more" toggle set BEFORE typing anything — this way the choice is made at the
+     * moment of saving, when the person actually knows whether there is another one coming.
+     */
+    save: async function (again) {
       if (this.saving || !this.form.title.trim()) return;
-      this.saving = true; this.errors = {};
+      this.saving = true;
+      this.saveMode = again ? 'another' : 'save';
+      this.errors = {};
       try {
         var resp = await this.$pb.api(this.endpoints.store, { method: 'POST', body: this.form });
         this.items.push(resp.item);
@@ -2780,24 +2991,29 @@ var WorkItemsScreen = {
         if (this.drawerItem && resp.item && String(resp.item.parent_id) === String(this.drawerItem.id)) {
           this.loadStructure();
         }
-        if (this.createMore) {
-          // "Create more" keeps the modal open, but the next work item starts CLEAN: every
-          // chip returns to the state the modal was opened in, so nothing carries over from
-          // the item just saved. `seedStateId` — not the last-used state — is what we reset
-          // to, so a modal opened from a state group's "+" keeps creating in that group
+        if (again) {
+          // The modal stays open on the same project, and the next work item starts CLEAN:
+          // every chip returns to the state the modal was opened in, so nothing carries over
+          // from the item just saved. `seedStateId` — not the last-used state — is what we
+          // reset to, so a modal opened from a state group's "+" keeps creating in that group
           // while a manual change to State, Priority, dates, assignees, labels or parent is
           // discarded along with the title.
           this.resetForm();
           var self = this;
           this.$nextTick(function () { if (self.$refs.titleInput) self.$refs.titleInput.focus(); });
         } else {
-          this.closeCreate();
+          // Straight out, with no dirty check: the form was just saved, so there is nothing
+          // unsaved left to ask about.
+          this.discardConfirm = false;
+          this.open = false; this.menu = ''; this.parentOpen = false;
+          this.newLabel.open = false;
         }
       } catch (e) {
         this.errors = this.$pb.fieldErrors(e);
         this.$pb.toast(this.$pb.firstError(e), 'error');
       }
       this.saving = false;
+      this.saveMode = '';
     },
     /**
      * Tint the header's state chip from the state's own colour — states are user-defined, so
@@ -2890,8 +3106,10 @@ var WorkItemsScreen = {
 
     // ===== Grid (desktop) =====
     '<wi-list v-show="items.length" ref="list" class="flex-1 min-h-0 hidden sm:block" ' +
-    ':items="items" :states="states" :flat="!!projectsById" :can-edit="canEdit" :can-add="canCreate" row-action="menu" ' +
-    ':labels-enabled="baseLabelsEnabled" ' +
+    ':items="items" :states="states" :flat="!!projectsById" :can-edit="canEditAny" :can-add="canCreate" row-action="menu" ' +
+    // Same signal that drives `flat`: `projectsById` exists only when the screen is showing
+    // several projects, which is the only case where a row should name the one it is from.
+    ':labels-enabled="baseLabelsEnabled" :multi-project="!!projectsById" ' +
     '@open="openDrawer" @chip="onChip" @group-add="openCreate" />' +
 
     // ===== Cards (mobile) — same data, grouped by state =====
@@ -2992,6 +3210,21 @@ var WorkItemsScreen = {
     '</span>' +
     '<span>{{ drawerItem.subscribed ? \'Unsubscribe\' : \'Subscribe\' }}</span></button>' +
 
+    // How much to hear about it. Shown only once you are actually on the item — offering a
+    // level to somebody who is not watching would be choosing the volume of silence.
+    '<div v-if="drawerItem.subscribed" class="relative">' +
+    '<button type="button" @click.stop="toggleMenu(\'watch\')" data-tip="How much to hear about this work item" ' +
+    'class="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-stroke text-[13px] text-ink hover:bg-hover">' +
+    '' + wiIcon('eye', 14, 'text-sub') + '<span>{{ watchLabel() }}</span></button>' +
+    '<div v-if="menu===\'watch\'" class="fixed inset-0 z-40" @click="menu=\'\'"></div>' +
+    '<div v-if="menu===\'watch\'" class="absolute right-0 top-full mt-1 w-64 rounded-md bg-white p-1 shadow-lg outline outline-1 outline-black/5 z-50">' +
+    '<button v-for="o in watchOptions()" :key="o.key" type="button" @click="setWatchLevel(o.key)" ' +
+    'class="w-full text-left px-2.5 py-2 rounded-md hover:bg-hover">' +
+    '<span class="flex items-center gap-2 text-[13px] text-ink">{{ o.label }}' +
+    '<span v-if="(drawerItem.watch_level || \'all\') === o.key" class="ml-auto text-brand">' + wiIcon('check', 15) + '</span></span>' +
+    '<span class="block text-[12px] text-sub">{{ o.desc }}</span></button>' +
+    '</div></div>' +
+
     '<button type="button" @click="drawerCopyLink" data-tip="Copy link" aria-label="Copy link" class="h-8 w-8 grid place-items-center rounded-md text-sub hover:bg-hover">' +
     '' + wiIcon('link', 16) + '</button>' +
     '<button v-if="canEdit" type="button" @click="openRowMenu(\'menu\', drawerItem, $event.currentTarget)" data-tip="More" aria-label="More" class="h-8 w-8 grid place-items-center rounded-md text-sub hover:bg-hover">' +
@@ -3020,8 +3253,8 @@ var WorkItemsScreen = {
     '@keydown.enter.prevent="$event.target.blur()" @keydown.esc.prevent="cancelEditTitle" ' +
     'class="w-full text-[22px] font-semibold text-head mt-2 bg-white outline-none rounded px-1 -ml-1 ring-1 ring-brand/40" />' +
     '<h1 v-else class="text-[22px] font-semibold text-head mt-2 rounded px-1 -ml-1" ' +
-    ':class="canEdit ? \'cursor-text\' : \'\'" @dblclick="startEditTitle" ' +
-    ':data-tip="canEdit ? \'Double-click to rename\' : null">{{ drawerItem.title }}</h1>' +
+    ':class="may(\'update\', drawerItem) ? \'cursor-text\' : \'\'" @dblclick="startEditTitle" ' +
+    ':data-tip="may(\'update\', drawerItem) ? \'Double-click to rename\' : null">{{ drawerItem.title }}</h1>' +
 
     '<div class="mt-4 border-b border-line"></div>' +
 
@@ -3046,7 +3279,7 @@ var WorkItemsScreen = {
     '<button v-if="desc.overflows" type="button" @click="toggleDescription" ' +
     'class="mt-2 text-[13px] font-medium text-link hover:underline">{{ desc.expanded ? \'Show less\' : \'Show more\' }}</button>' +
     '</div>' +
-    '<button v-else-if="canEdit" type="button" @click="editDescription" class="mt-5 text-[14px] text-sub hover:text-ink">Add a description…</button>' +
+    '<button v-else-if="may(\'update\', drawerItem)" type="button" @click="editDescription" class="mt-5 text-[14px] text-sub hover:text-ink">Add a description…</button>' +
     '<p v-else class="text-[14px] text-sub mt-5">No description.</p>' +
 
 
@@ -3336,15 +3569,21 @@ var WorkItemsScreen = {
     '<div v-else-if="feed" class="pt-4">' +
 
     // ===== Comment composer — on All and Comments (§5.3/§7.3) =====
-    '<div v-if="canEdit && (tab === \'all\' || tab === \'comments\')" class="mb-5">' +
+    // `comment`, not `canEdit`: a Commenter's whole role is this box, and an assigned Guest
+    // gets it too — neither of them may edit the item (§8).
+    '<div v-if="may(\'comment\', drawerItem) && (tab === \'all\' || tab === \'comments\')" class="mb-5">' +
     // 200px: a comment box the size of a single-line field invites single-line comments, and
     // this one carries a toolbar with headings and lists in it.
     '<wk-editor ref="commentEditor" v-model="composer.content" placeholder="Add comment" minimal ' +
     'min-height="200px" :document-view="false" ' +
     ':media-upload="endpoints.mediaUpload" :mention-url="endpoints.mentionUsers" />' +
+    // Left-aligned, like every other form action in the app (the Create Work Item footer
+    // reads Save / Save & Create Another / Discard from the left). It used to carry `ml-auto`,
+    // which parked it under the right edge of a 200px-tall editor — the far corner from where
+    // the caret just was.
     '<div class="flex items-center mt-2">' +
     '<button type="button" @click="postComment" :disabled="composer.busy || !hasText(composer.content)" ' +
-    'class="ml-auto h-8 px-4 rounded-md bg-brand hover:bg-brand-dark text-white text-[13px] font-semibold disabled:opacity-50">Comment</button>' +
+    'class="h-8 px-4 rounded-md bg-brand hover:bg-brand-dark text-white text-[13px] font-semibold disabled:opacity-50">Comment</button>' +
     '</div></div>' +
 
     // ===== All (§5) =====
@@ -3410,7 +3649,7 @@ var WorkItemsScreen = {
     '<button v-if="canEditComment(c)" type="button" @click="startEditComment(c)" data-tip="Edit" aria-label="Edit comment" ' +
     'class="h-6 w-6 grid place-items-center rounded text-faint hover:text-ink hover:bg-hover">' +
     '' + wiIcon('pen-solid-tip', 14) + '</button>' +
-    '<button v-if="canEdit" type="button" @click="askDeleteComment(c, false)" data-tip="Delete" aria-label="Delete comment" ' +
+    '<button v-if="canEditComment(c)" type="button" @click="askDeleteComment(c, false)" data-tip="Delete" aria-label="Delete comment" ' +
     'class="h-6 w-6 grid place-items-center rounded text-faint hover:text-danger hover:bg-hover">' +
     '' + wiIcon('trash-can', 14) + '</button>' +
     '</span></div>' +
@@ -3429,7 +3668,7 @@ var WorkItemsScreen = {
     '<button v-if="canEditComment(r)" type="button" @click="startEditComment(r)" data-tip="Edit" aria-label="Edit reply" ' +
     'class="h-6 w-6 grid place-items-center rounded text-faint hover:text-ink hover:bg-hover">' +
     '' + wiIcon('pen-solid-tip', 13) + '</button>' +
-    '<button v-if="canEdit" type="button" @click="askDeleteComment(r, true)" data-tip="Delete" aria-label="Delete reply" ' +
+    '<button v-if="canEditComment(r)" type="button" @click="askDeleteComment(r, true)" data-tip="Delete" aria-label="Delete reply" ' +
     'class="h-6 w-6 grid place-items-center rounded text-faint hover:text-danger hover:bg-hover">' +
     '' + wiIcon('trash-can', 13) + '</button>' +
     '</span></div>' +
@@ -3620,22 +3859,22 @@ var WorkItemsScreen = {
     '<div class="mt-4 grid grid-cols-2 gap-x-4 gap-y-4">' +
 
     '<div class="min-w-0"><div class="text-[12px] text-sub mb-1.5">State</div>' +
-    '<button type="button" :disabled="!canEdit" @click="openRowMenu(\'state\', drawerItem, $event.currentTarget)" ' +
-    ':data-tip="(canEdit ? \'Change state — \' : \'State: \') + (drawerItem.state ? drawerItem.state.name : \'No state\')" ' +
+    '<button type="button" :disabled="!may(\'changeStatus\', drawerItem)" @click="openRowMenu(\'state\', drawerItem, $event.currentTarget)" ' +
+    ':data-tip="(may(\'changeStatus\', drawerItem) ? \'Change state — \' : \'State: \') + (drawerItem.state ? drawerItem.state.name : \'No state\')" ' +
     'class="flex items-center gap-1.5 max-w-full text-[13px] text-ink rounded px-1.5 py-0.5 -ml-1.5 hover:bg-hover">' +
     '<span class="grid place-items-center shrink-0" v-html="stateIcon(drawerItem.state)"></span>' +
     '<span class="truncate">{{ drawerItem.state ? drawerItem.state.name : \'No state\' }}</span></button></div>' +
 
     '<div class="min-w-0"><div class="text-[12px] text-sub mb-1.5">Priority</div>' +
-    '<button type="button" :disabled="!canEdit" @click="openRowMenu(\'priority\', drawerItem, $event.currentTarget)" ' +
-    ':data-tip="canEdit ? \'Change priority\' : \'Priority\'" class="inline-flex items-center gap-1.5 text-[13px] rounded px-1.5 py-0.5 -ml-1.5 hover:bg-hover" :class="priorityMeta(drawerItem.priority).cls">' +
+    '<button type="button" :disabled="!may(\'changePriority\', drawerItem)" @click="openRowMenu(\'priority\', drawerItem, $event.currentTarget)" ' +
+    ':data-tip="may(\'changePriority\', drawerItem) ? \'Change priority\' : \'Priority\'" class="inline-flex items-center gap-1.5 text-[13px] rounded px-1.5 py-0.5 -ml-1.5 hover:bg-hover" :class="priorityMeta(drawerItem.priority).cls">' +
     '<span class="grid place-items-center" v-html="priorityMeta(drawerItem.priority).icon"></span>{{ priorityMeta(drawerItem.priority).label }}</button></div>' +
 
     // A long name truncates instead of wrapping: these cells are half a narrow column, and a
     // name breaking across two lines pushes every property below it out of alignment. The
     // full name stays available in the tooltip.
     '<div class="min-w-0"><div class="text-[12px] text-sub mb-1.5">Assignee</div>' +
-    '<button type="button" :disabled="!canEdit" @click="openRowMenu(\'assignees\', drawerItem, $event.currentTarget)" ' +
+    '<button type="button" :disabled="!may(\'changeAssignee\', drawerItem)" @click="openRowMenu(\'assignees\', drawerItem, $event.currentTarget)" ' +
     ':data-tip="assigneeTip" class="flex items-center gap-1.5 max-w-full text-[13px] text-ink rounded px-1.5 py-0.5 -ml-1.5 hover:bg-hover">' +
     '<template v-if="drawerItem.assignees && drawerItem.assignees.length">' +
     '<wi-avatar :person="drawerItem.assignees[0]" :size="20" />' +
@@ -3643,13 +3882,13 @@ var WorkItemsScreen = {
     '<span v-else class="text-sub">Unassigned</span></button></div>' +
 
     '<div class="min-w-0"><div class="text-[12px] text-sub mb-1.5">Start date</div>' +
-    '<button type="button" :disabled="!canEdit" @click="openRowMenu(\'start_date\', drawerItem, $event.currentTarget)" ' +
-    ':data-tip="canEdit ? \'Change start date\' : \'Start date\'" class="text-[13px] text-left rounded px-1.5 py-0.5 -ml-1.5 hover:bg-hover" :class="drawerItem.start_date ? \'text-ink\' : \'text-sub\'">' +
+    '<button type="button" :disabled="!may(\'changeDates\', drawerItem)" @click="openRowMenu(\'start_date\', drawerItem, $event.currentTarget)" ' +
+    ':data-tip="may(\'changeDates\', drawerItem) ? \'Change start date\' : \'Start date\'" class="text-[13px] text-left rounded px-1.5 py-0.5 -ml-1.5 hover:bg-hover" :class="drawerItem.start_date ? \'text-ink\' : \'text-sub\'">' +
     '{{ drawerItem.start_date ? fmtDate(drawerItem.start_date) : \'None\' }}</button></div>' +
 
     '<div class="min-w-0"><div class="text-[12px] text-sub mb-1.5">Due date</div>' +
-    '<button type="button" :disabled="!canEdit" @click="openRowMenu(\'due_date\', drawerItem, $event.currentTarget)" ' +
-    ':data-tip="canEdit ? \'Change due date\' : \'Due date\'" class="text-[13px] text-left rounded px-1.5 py-0.5 -ml-1.5 hover:bg-hover" :class="drawerItem.due_date ? \'text-ink\' : \'text-sub\'">' +
+    '<button type="button" :disabled="!may(\'changeDates\', drawerItem)" @click="openRowMenu(\'due_date\', drawerItem, $event.currentTarget)" ' +
+    ':data-tip="may(\'changeDates\', drawerItem) ? \'Change due date\' : \'Due date\'" class="text-[13px] text-left rounded px-1.5 py-0.5 -ml-1.5 hover:bg-hover" :class="drawerItem.due_date ? \'text-ink\' : \'text-sub\'">' +
     '{{ drawerItem.due_date ? fmtDate(drawerItem.due_date) : \'None\' }}</button></div>' +
     '</div>' +
 
@@ -3811,13 +4050,13 @@ var WorkItemsScreen = {
     '<span class="text-[11px] text-faint">Label feature disabled</span></template>' +
 
     '<template v-if="labelsEnabled">' +
-    '<button v-for="l in drawerItem.labels" :key="l.id" type="button" :disabled="!canEdit" ' +
+    '<button v-for="l in drawerItem.labels" :key="l.id" type="button" :disabled="!may(\'manageLabels\', drawerItem)" ' +
     '@click="openRowMenu(\'labels\', drawerItem, $event.currentTarget)" ' +
-    ':data-tip="canEdit ? \'Change labels — \' + l.name : l.name" ' +
+    ':data-tip="may(\'manageLabels\', drawerItem) ? \'Change labels — \' + l.name : l.name" ' +
     'class="inline-flex items-center gap-1 h-6 px-1.5 rounded border border-line text-[11px] text-ink max-w-full hover:bg-hover">' +
     '<span class="h-2 w-2 rounded-full shrink-0" :style="{background: l.color}"></span><span class="truncate">{{ l.name }}</span></button>' +
     '</template>' +
-    '<button v-if="canEdit && labelsEnabled" type="button" @click="openRowMenu(\'labels\', drawerItem, $event.currentTarget)" ' +
+    '<button v-if="may(\'manageLabels\', drawerItem) && labelsEnabled" type="button" @click="openRowMenu(\'labels\', drawerItem, $event.currentTarget)" ' +
     'data-tip="Add labels" aria-label="Add labels" ' +
     'class="inline-flex items-center gap-1 h-6 px-1.5 rounded-md border border-dashed border-stroke text-[12px] text-sub hover:bg-hover hover:text-ink">' +
     '' + wiIcon('plus', 12) + '' +
@@ -4098,9 +4337,22 @@ var WorkItemsScreen = {
     '<div v-if="newLabel.error" class="mb-2 rounded-md border border-danger/40 bg-danger/5 px-2 py-1.5 text-[12px] text-danger">{{ newLabel.error }}</div>' +
     '<input v-model="newLabel.name" placeholder="Label name" maxlength="60" @keydown.enter.prevent="saveNewLabel" ' +
     'class="w-full h-9 px-3 rounded-md bg-hover text-[13px] text-ink placeholder:text-faint outline outline-1 -outline-offset-1 outline-transparent focus:bg-white focus:outline-stroke" />' +
-    '<div class="flex flex-wrap items-center gap-1.5 mt-2 px-0.5">' +
-    '<button v-for="c in labelColors()" :key="c" type="button" @click="newLabel.color = c" :data-tip="c" :aria-label="\'Colour \' + c" ' +
-    'class="h-5 w-5 rounded-full border-2" :style="{background: c, borderColor: newLabel.color === c ? \'#23272f\' : \'transparent\'}"></button>' +
+    // Colour: ONE small square, empty until it is clicked.
+    //
+    // It replaced a row of eight fixed swatches, which is what made the choice a menu of
+    // eight rather than a colour. The square IS the native `<input type="color">` — clicking
+    // it opens the platform's own picker, so any colour is reachable — and `is-empty` keeps
+    // it an outlined box until somebody actually picks, because that control cannot
+    // represent "nothing chosen" on its own (its value is black when unset).
+    //
+    // Left empty, the server fills it: `color` is nullable there and falls back to the next
+    // colour in the project's palette, so a label made without opening the picker still
+    // arrives with a sensible colour instead of black.
+    '<div class="flex items-center gap-2 mt-2 px-0.5">' +
+    '<input type="color" class="pb-color-swatch" :class="{ \'is-empty\': !newLabel.color }" ' +
+    ':value="newLabel.color || \'#000000\'" @input="newLabel.color = $event.target.value.toUpperCase()" ' +
+    'data-tip="Choose a colour" aria-label="Label colour" />' +
+    '<span class="text-[12px] text-sub">{{ newLabel.color || \'Pick a colour\' }}</span>' +
     '</div>' +
     '<div class="flex justify-end gap-2 mt-2">' +
     '<button type="button" @click="cancelNewLabel" class="h-8 px-3 rounded-md border border-stroke text-[12px] font-semibold text-ink hover:bg-hover">Cancel</button>' +
@@ -4193,13 +4445,15 @@ var WorkItemsScreen = {
     // -- Action menu (§4.4) --
     '<template v-else-if="rowMenu.kind===\'menu\'">' +
     '<div class="py-1 text-[13px]">' +
-    '<button type="button" @click="rowEdit" class="w-full text-left flex items-center gap-2.5 px-3 h-9 hover:bg-hover text-ink">' + wiIcon('pen', 15, 'text-faint shrink-0') + 'Edit</button>' +
+    '<button v-if="may(\'update\')" type="button" @click="rowEdit" class="w-full text-left flex items-center gap-2.5 px-3 h-9 hover:bg-hover text-ink">' + wiIcon('pen', 15, 'text-faint shrink-0') + 'Edit</button>' +
     '<button type="button" @click="rowCopy" class="w-full text-left flex items-center gap-2.5 px-3 h-9 hover:bg-hover text-ink">' + wiIcon('copy', 15, 'text-faint shrink-0') + 'Make a copy</button>' +
     '<button type="button" @click="rowOpenTab" class="w-full text-left flex items-center gap-2.5 px-3 h-9 hover:bg-hover text-ink">' + wiIcon('arrow-up-right-from-square', 15, 'text-faint shrink-0') + 'Open in new tab</button>' +
     '<button type="button" @click="rowCopyLink" class="w-full text-left flex items-center gap-2.5 px-3 h-9 hover:bg-hover text-ink">' + wiIcon('link', 15, 'text-faint shrink-0') + 'Copy link</button>' +
-    '<button type="button" @click="rowArchive" class="w-full text-left flex items-center gap-2.5 px-3 h-9 hover:bg-hover text-ink">' + wiIcon('box-archive', 15, 'text-faint shrink-0') + 'Archive</button>' +
-    '<div class="my-1 border-t border-line"></div>' +
-    '<button type="button" @click="rowAskDelete" class="w-full text-left flex items-center gap-2.5 px-3 h-9 hover:bg-hover text-danger">' + wiIcon('trash', 15, 'shrink-0') + 'Delete</button>' +
+    // Archive and Delete are Admin-only (§8). Hidden rather than disabled: a permanently
+    // greyed Delete on every row is a standing reminder of something you may never do.
+    '<button v-if="may(\'archive\')" type="button" @click="rowArchive" class="w-full text-left flex items-center gap-2.5 px-3 h-9 hover:bg-hover text-ink">' + wiIcon('box-archive', 15, 'text-faint shrink-0') + 'Archive</button>' +
+    '<div v-if="may(\'delete\')" class="my-1 border-t border-line"></div>' +
+    '<button v-if="may(\'delete\')" type="button" @click="rowAskDelete" class="w-full text-left flex items-center gap-2.5 px-3 h-9 hover:bg-hover text-danger">' + wiIcon('trash', 15, 'shrink-0') + 'Delete</button>' +
     '</div></template>' +
 
     '</div>' +
@@ -4221,11 +4475,12 @@ var WorkItemsScreen = {
     '<div class="relative w-full max-w-[720px] bg-white rounded-xl shadow-xl flex flex-col max-h-[86vh]">' +
 
     // Header
+    //
+    // No project chip. This screen IS one project — its name is in the breadcrumb above the
+    // grid and again in the page title — so repeating it inside the dialog restated what the
+    // reader already knew and pushed the title of the dialog into second place.
     '<div class="flex items-center gap-2 px-6 pt-5 shrink-0">' +
-    // Project context chip — the POC's bordered chip, not a filled one.
-    '<span class="inline-flex items-center gap-1.5 h-7 px-2 rounded-md border border-stroke text-[13px] text-ink"><span>{{ project.emoji || \'📁\' }}</span>{{ project.name }}</span>' +
-    '' + wiIcon('chevron-right', 13, 'text-faint') + '' +
-    '<span class="text-[13px] text-sub">Create Work Item</span>' +
+    '<span class="text-[13px] font-semibold text-ink">Create Work Item</span>' +
     '<button @click="closeCreate" class="ml-auto h-8 w-8 grid place-items-center rounded-md text-sub hover:bg-hover" data-tip="Close" aria-label="Close">' + wiIcon('xmark', 16) + '</button>' +
     '</div>' +
 
@@ -4335,8 +4590,47 @@ var WorkItemsScreen = {
     '<span class="h-2.5 w-2.5 rounded-full shrink-0" :style="{background: l.color}"></span><span class="flex-1 truncate">{{ l.name }}</span>' +
     '<span v-if="isLabelled(l)" class="text-brand shrink-0">' + wiIcon('check', 15) + '</span>' +
     '</button>' +
-    '<div v-if="!filteredLabels.length" class="px-2 py-3 text-[13px] text-sub text-center">No labels configured for this project</div>' +
-    '</div></div></div>' +
+    '<div v-if="!filteredLabels.length && !newLabel.open" class="px-2 py-3 text-[13px] text-sub text-center">' +
+    '{{ labelQuery ? \'No label matches\' : \'No labels yet\' }}</div>' +
+    '</div>' +
+
+    // Create a label without leaving the form — the same row the grid's picker has. It
+    // quotes what was typed, so the common case (searched, not found, wanted anyway) is one
+    // click, and an empty project is no longer a dead end.
+    '<div v-if="!newLabel.open" class="border-t border-line mt-1 pt-1">' +
+    '<button type="button" @click="startNewFormLabel" :disabled="labelExists(labelQuery)" ' +
+    'class="w-full text-left flex items-center gap-2.5 px-2 h-9 rounded-md hover:bg-hover text-[13px] text-ink disabled:opacity-40">' +
+    '' + wiIcon('plus', 15, 'text-sub shrink-0') + '' +
+    '<span class="truncate">{{ labelQuery.trim() ? \'Create “\' + labelQuery.trim() + \'”\' : \'Create new label\' }}</span></button>' +
+    '</div>' +
+
+    '<div v-else class="border-t border-line mt-1 pt-2">' +
+    '<div v-if="newLabel.error" class="mb-2 rounded-md border border-danger/40 bg-danger/5 px-2 py-1.5 text-[12px] text-danger">{{ newLabel.error }}</div>' +
+    '<input v-model="newLabel.name" placeholder="Label name" maxlength="60" @keydown.enter.prevent="saveNewFormLabel" ' +
+    'class="w-full h-9 px-3 rounded-md bg-hover text-[13px] text-ink placeholder:text-faint outline outline-1 -outline-offset-1 outline-transparent focus:bg-white focus:outline-stroke" />' +
+    // Colour: ONE small square, empty until it is clicked.
+    //
+    // It replaced a row of eight fixed swatches, which is what made the choice a menu of
+    // eight rather than a colour. The square IS the native `<input type="color">` — clicking
+    // it opens the platform's own picker, so any colour is reachable — and `is-empty` keeps
+    // it an outlined box until somebody actually picks, because that control cannot
+    // represent "nothing chosen" on its own (its value is black when unset).
+    //
+    // Left empty, the server fills it: `color` is nullable there and falls back to the next
+    // colour in the project's palette, so a label made without opening the picker still
+    // arrives with a sensible colour instead of black.
+    '<div class="flex items-center gap-2 mt-2 px-0.5">' +
+    '<input type="color" class="pb-color-swatch" :class="{ \'is-empty\': !newLabel.color }" ' +
+    ':value="newLabel.color || \'#000000\'" @input="newLabel.color = $event.target.value.toUpperCase()" ' +
+    'data-tip="Choose a colour" aria-label="Label colour" />' +
+    '<span class="text-[12px] text-sub">{{ newLabel.color || \'Pick a colour\' }}</span>' +
+    '</div>' +
+    '<div class="flex justify-end gap-2 mt-2">' +
+    '<button type="button" @click="cancelNewLabel" class="h-8 px-3 rounded-md border border-stroke text-[12px] font-semibold text-ink hover:bg-hover">Cancel</button>' +
+    '<button type="button" @click="saveNewFormLabel" :disabled="newLabel.busy || !newLabel.name.trim()" ' +
+    'class="h-8 px-3 rounded-md bg-brand hover:bg-brand-dark text-white text-[12px] font-semibold disabled:opacity-50">{{ newLabel.busy ? \'Saving…\' : \'Save\' }}</button>' +
+    '</div></div>' +
+    '</div></div>' +
 
     // Start date — anchored calendar popover (quick options → Custom Date), per the POC
     '<div class="relative">' +
@@ -4369,16 +4663,31 @@ var WorkItemsScreen = {
     '<p v-for="(msgs, field) in errors" :key="field" v-show="field !== \'title\' && field !== \'description\'" class="text-[12px] text-danger mb-2">{{ msgs[0] }}</p>' +
     '</div>' +
 
-    // Footer
+    // Footer — actions on the LEFT, in the order they are reached for:
+    // Save · Save & Create Another · Discard.
+    //
+    // Both save buttons are disabled while EITHER is running (`saving`), which is what stops a
+    // second submission; `saveMode` decides which of the two says "Saving…", so the label
+    // lands on the button that was actually pressed.
     '<div class="flex items-center gap-3 px-6 py-4 border-t border-line shrink-0">' +
-    '<button type="button" role="switch" :aria-checked="createMore ? \'true\' : \'false\'" @click="createMore = !createMore" :class="[\'ml-auto shrink-0 relative inline-flex h-5 w-9 items-center rounded-full px-0.5 transition-colors\', createMore ? \'bg-brand\' : \'bg-stroke\']">' +
-    '<span :class="[\'h-4 w-4 rounded-full bg-white shadow transition-transform\', createMore ? \'translate-x-4\' : \'translate-x-0\']"></span></button>' +
-    '<span class="text-[13px] text-sub">Create more</span>' +
-    '<button type="button" class="h-9 px-4 rounded-md border border-stroke text-[13px] font-semibold text-ink hover:bg-hover" @click="closeCreate">Discard</button>' +
-    '<button type="button" :disabled="saving || !form.title.trim()" @click="save" class="h-9 px-4 rounded-md bg-brand hover:bg-brand-dark text-white text-[13px] font-semibold disabled:opacity-50">{{ saving ? \'Saving…\' : \'Save\' }}</button>' +
+    '<button type="button" :disabled="saving || !form.title.trim()" @click="save(false)" class="h-9 px-4 rounded-md bg-brand hover:bg-brand-dark text-white text-[13px] font-semibold disabled:opacity-50">' +
+    '{{ saveMode === \'save\' ? \'Saving…\' : \'Save\' }}</button>' +
+    '<button type="button" :disabled="saving || !form.title.trim()" @click="save(true)" class="h-9 px-4 rounded-md border border-stroke text-[13px] font-semibold text-ink hover:bg-hover disabled:opacity-50">' +
+    '{{ saveMode === \'another\' ? \'Saving…\' : \'Save &amp; Create Another\' }}</button>' +
+    '<button type="button" :disabled="saving" class="h-9 px-4 rounded-md border border-stroke text-[13px] font-semibold text-ink hover:bg-hover disabled:opacity-50" @click="closeCreate">Discard</button>' +
     '</div>' +
 
     '</div></div>' +
+
+    // ===== Discard confirmation — only ever shown for a form with something in it =====
+    // z above the create modal's own z-[100], or it would render behind the thing it is
+    // asking about.
+    '<pb-modal :open="discardConfirm" z="z-[110]" title="Discard this work item?" @close="discardConfirm=false">' +
+    '<p class="text-[13px] text-sub leading-relaxed">You have entered details that have not been saved. Closing this form discards them.</p>' +
+    '<template #footer>' +
+    '<button type="button" class="h-9 px-4 rounded-md border border-stroke text-[13px] font-semibold text-ink hover:bg-hover" @click="discardConfirm=false">Keep editing</button>' +
+    '<button type="button" class="h-9 px-4 rounded-md bg-danger text-white text-[13px] font-semibold" @click="forceClose">Discard</button>' +
+    '</template></pb-modal>' +
 
     // ===== Parent search panel (POC: ParentSearchModal) — sits above the create modal =====
     '<div v-if="parentOpen" class="fixed inset-0 z-[105] flex items-start justify-center p-4 sm:pt-24">' +

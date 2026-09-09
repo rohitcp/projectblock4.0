@@ -136,10 +136,33 @@ makes the id readable at all so `MentionSync` can then refuse it. The attribute 
 authority is `MentionableUsers`. A test asserts both halves: the attribute survives, and a
 crafted id for an outsider still produces no mention and no email.
 
-### Not built
+### Status (audited 2026-09-08)
 
-The editor integration (slice 2), the Inbox (§19/§20), real-time (§9), the mention click
-popover (§18), and mention display styling (§17) — all listed above with their sections.
+All eleven acceptance criteria (MN-01 … MN-11) are implemented, and the core rules were
+re-verified against the database: duplicate names collapse to one record, hand-typed `@Name`
+records nothing, a crafted id for an outsider records nothing, a self-mention is recorded and
+notifies nobody, and editing notifies only the newly named while a removed name loses its row.
+
+Four of the five things this section used to list as unbuilt have since shipped:
+
+- **Editor integration (slice 2)** — built. The `@` popup lives in `assets/js/lexical/editor.js`
+  (`mentionUrl`, `refreshMention`, `onMentionKeys`) and is wired to the description, the comment
+  box and the page editor.
+- **Inbox (§19/§20)** — built. `InboxNotifier`, `InboxNotification::TYPE_MENTION`, and a
+  Mentions tab with its own count and empty state.
+- **Real-time (§9)** — built. `InboxNotificationCreated implements ShouldBroadcastNow`, on the
+  user's private channel, consumed by `PB.onInbox` in `assets/js/realtime.js`.
+- **Mention display styling (§17)** — built. `.pb-mention` in `work-items.css`.
+
+**Still not built — the mention click popover (§18).** The chip carries `cursor: pointer` and a
+hover state, so it advertises itself as clickable, and nothing happens: there is no handler for
+`.pb-mention` anywhere in the read views. Either build the popover or drop the affordance;
+looking clickable and not being so is the one state worse than either.
+
+### Since changed elsewhere
+
+Muting a work item now suppresses its mentions — see
+`docs/features/work-item-comment-notifications.md` for why that follows from the watch levels.
 
 ## Files Changed
 

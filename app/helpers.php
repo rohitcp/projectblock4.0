@@ -138,3 +138,44 @@ if (! function_exists('pb_icon_boot')) {
         );
     }
 }
+
+if (! function_exists('pb_avatar_color')) {
+    /**
+     * The tile colour for somebody with no uploaded photo.
+     *
+     * A PHP twin of `avatarColor()` in assets/js/settings/app.js, and it has to STAY a twin:
+     * the same person appears as an avatar in the app and again in the emails the app sends,
+     * and two independent colour choices would give them two different identities. The palette
+     * and both hashing rules below are copied from there deliberately — see that function's
+     * notes for why consecutive ids walk the palette instead of being hashed into it.
+     *
+     * Every colour clears 4.5:1 against white text.
+     *
+     * @param  int|string|null  $key  the user's id, or their email/name when there is no id
+     */
+    function pb_avatar_color(int|string|null $key): string
+    {
+        $palette = [
+            '#2563EB', '#DB2777', '#047857', '#7C3AED', '#C2410C', '#0E7490',
+            '#C026D3', '#B45309', '#4F46E5', '#E11D48', '#0F766E', '#475569',
+        ];
+
+        $key = (string) ($key ?? '');
+
+        if ($key === '') {
+            return $palette[0];
+        }
+
+        // A numeric id WALKS the palette; anything else is spread with djb2.
+        if (ctype_digit($key)) {
+            return $palette[(int) $key % count($palette)];
+        }
+
+        $hash = 5381;
+        foreach (str_split($key) as $char) {
+            $hash = (($hash * 33) ^ ord($char)) & 0xFFFFFFFF;
+        }
+
+        return $palette[$hash % count($palette)];
+    }
+}

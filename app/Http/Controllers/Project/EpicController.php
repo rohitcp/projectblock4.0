@@ -211,7 +211,8 @@ class EpicController extends Controller
             ->forProject($project->id)
             ->whereIn('id', $ids)
             ->get()
-            ->filter(fn (WorkItem $i) => Auth::user()->can('update', $i));
+            // Structure, not an edit of the item — §8 "Manage Cycle/Module/Epic".
+            ->filter(fn (WorkItem $i) => Auth::user()->can('manageStructure', $i));
 
         DB::transaction(function () use ($items, $epic) {
             foreach ($items as $item) {

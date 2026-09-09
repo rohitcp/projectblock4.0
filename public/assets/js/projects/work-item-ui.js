@@ -120,17 +120,40 @@ function wiChip(inner, extra, tip, shrinkable) {
  */
 function wiMetaCell(d, opts) {
   opts = opts || {};
-  var edit = !!opts.edit;
   var pri = WI_PRI[d.priority] || WI_PRI.none;
+
+  /* Per-CHIP permissions, from the row's own `abilities` map
+     (docs/features/project-role-permissions.md §8).
+
+     `opts.edit` used to answer for the whole cluster, because "may edit" was once a
+     project-wide question. It is not: an assigned Contributor may change the status and the
+     dates on THIS row and nothing at all on the one under it, and only an Admin may reassign
+     either. So each chip asks for its own ability, and a chip the viewer cannot use renders
+     as plain text rather than as a button that would 403.
+
+     `opts.edit` is still honoured as a ceiling — a read-only host (the Cycles panel) passes
+     false and gets a read-only cluster whatever the abilities say. When a row carries no
+     abilities map at all (an older payload), it falls back to `opts.edit`, so nothing that
+     has not been migrated silently loses its controls. */
+  var able = d.abilities || null;
+  var may = function (ability) {
+    if (!opts.edit) return false;
+
+    return able ? !!able[ability] : true;
+  };
+
+  // Kept for the tooltips and the assignee block below, which read "is anything editable".
+  var edit = !!opts.edit;
 
   // Each chip carries its own tooltip: the row shows a value, the tooltip names the property
   // it belongs to and says the chip is clickable — a bare "Medium" or a lone calendar icon
   // does not tell you either.
   // `shrinkable` chips give up width instead of pushing the cluster past the cell — see the
   // note on the container below.
-  var chip = function (inner, act, extra, tip, shrinkable) {
+  var chip = function (inner, act, extra, tip, shrinkable, can) {
     var tipAttr = tip ? ' data-tip="' + wiEsc(tip) + '" aria-label="' + wiEsc(tip) + '"' : '';
-    if (!edit) return wiChip(inner, extra, tip, shrinkable);
+    // `can === undefined` keeps the old behaviour for callers that have no ability of their own.
+    if (can === false || (can === undefined && !edit)) return wiChip(inner, extra, tip, shrinkable);
     return '<button type="button" data-act="' + act + '" data-id="' + d.id + '"' + tipAttr +
       ' class="inline-flex items-center gap-1.5 h-6 px-2 rounded border border-stroke bg-white text-[12px] hover:bg-hover ' +
       (shrinkable ? 'min-w-0' : 'shrink-0') + ' ' + (extra || 'text-ink') + '">' + inner + '</button>';
@@ -144,7 +167,15 @@ function wiMetaCell(d, opts) {
   //
   // FIRST in the cluster and carrying the ml-auto, so it reads as the row's origin rather
   // than as another editable property, and so the cluster still overflows rightward.
-  if (d.project) {
+  //
+  // Gated on `opts.multiProject`, NOT on `d.project` alone. The payload carries `project`
+  // whenever that relation happens to be loaded, and notifiers load it while doing unrelated
+  // work — so on a single-project grid a row that had just been edited came back wearing a
+  // project chip none of its neighbours had. The question "should this row name its project"
+  // is about the LIST, and only the list can answer it.
+  var showProject = opts.multiProject !== undefined ? !!opts.multiProject : !!d.project;
+
+  if (showProject && d.project) {
     out.push(wiChip(
       '<span class="shrink-0">' + (d.project.emoji || '📁') + '</span>' + wiEsc(d.project.name),
       'text-sub ml-auto', 'Project: ' + d.project.name, true
@@ -156,20 +187,22 @@ function wiMetaCell(d, opts) {
     // over-full cluster overflows to the LEFT, so the state chip was the one sliced in half.
     // An auto margin collapses to 0 when there is no room, and the overflow goes right.
     chip(wiStateIcon(d.state) + wiEsc(d.state ? d.state.name : 'No state'), 'state',
-      'text-ink' + (d.project ? '' : ' ml-auto'),
-      (edit ? 'Change state — ' : 'State: ') + (d.state ? d.state.name : 'No state')),
+      'text-ink' + ((showProject && d.project) ? '' : ' ml-auto'),
+      (may('changeStatus') ? 'Change state — ' : 'State: ') + (d.state ? d.state.name : 'No state'),
+      false, may('changeStatus')),
     chip(pri.icon + pri.label, 'priority', pri.cls,
-      (edit ? 'Change priority — ' : 'Priority: ') + pri.label)
+      (may('changePriority') ? 'Change priority — ' : 'Priority: ') + pri.label,
+      false, may('changePriority'))
   );
 
   // Dates: a set date shows its chip; an empty one shows a compact calendar button so it can
   // still be filled in from the row.
   out.push('<span class="hidden xl:inline-flex">' + (d.start_date
-    ? chip(WI_CAL + wiFmtDate(d.start_date), 'start_date', null, 'Start date: ' + wiFmtDate(d.start_date))
-    : chip(WI_CAL, 'start_date', 'text-faint', edit ? 'Set a start date' : 'No start date')) + '</span>');
+    ? chip(WI_CAL + wiFmtDate(d.start_date), 'start_date', null, 'Start date: ' + wiFmtDate(d.start_date), false, may('changeDates'))
+    : chip(WI_CAL, 'start_date', 'text-faint', may('changeDates') ? 'Set a start date' : 'No start date', false, may('changeDates'))) + '</span>');
   out.push('<span class="hidden xl:inline-flex">' + (d.due_date
-    ? chip(WI_CAL + wiFmtDate(d.due_date), 'due_date', null, 'Due date: ' + wiFmtDate(d.due_date))
-    : chip(WI_CAL, 'due_date', 'text-faint', edit ? 'Set a due date' : 'No due date')) + '</span>');
+    ? chip(WI_CAL + wiFmtDate(d.due_date), 'due_date', null, 'Due date: ' + wiFmtDate(d.due_date), false, may('changeDates'))
+    : chip(WI_CAL, 'due_date', 'text-faint', may('changeDates') ? 'Set a due date' : 'No due date', false, may('changeDates'))) + '</span>');
 
   // Assignees: stacked avatars, or a dashed placeholder when unassigned.
   var avatars = (d.assignees || []).slice(0, 3).map(function (a) { return wiAvatar(a, 24); }).join('');
@@ -178,8 +211,9 @@ function wiMetaCell(d, opts) {
     avatars = '<span class="h-6 w-6 rounded-full border border-dashed border-stroke grid place-items-center text-faint shrink-0">' + wiIcon('user-thin', 12) + '</span>';
   }
   var who = (d.assignees || []).map(function (a) { return a.name; }).join(', ');
-  var assigneeTip = who ? (edit ? 'Change assignee — ' + who : 'Assigned to ' + who) : (edit ? 'Assign someone' : 'Unassigned');
-  out.push(edit
+  var mayAssign = may('changeAssignee');
+  var assigneeTip = who ? (mayAssign ? 'Change assignee — ' + who : 'Assigned to ' + who) : (mayAssign ? 'Assign someone' : 'Unassigned');
+  out.push(mayAssign
     ? '<button type="button" data-act="assignees" data-id="' + d.id + '" class="inline-flex items-center gap-0.5 shrink-0" data-tip="' + wiEsc(assigneeTip) + '" aria-label="' + wiEsc(assigneeTip) + '">' + avatars + '</button>'
     : '<span class="inline-flex items-center gap-0.5 shrink-0" data-tip="' + wiEsc(assigneeTip) + '">' + avatars + '</span>');
 
@@ -188,7 +222,8 @@ function wiMetaCell(d, opts) {
   // beside the dates. The label carries the reading, so it needs no icon.
   if (d.estimate) {
     out.push('<span class="hidden xl:inline-flex">' + chip(wiEsc(d.estimate.label), 'estimate', null,
-      (edit ? 'Change estimate — ' : 'Estimate: ') + d.estimate.label) + '</span>');
+      (may('manageStructure') ? 'Change estimate — ' : 'Estimate: ') + d.estimate.label,
+      false, may('manageStructure')) + '</span>');
   }
 
   // Labels. Skipped entirely when the project has the feature switched off — §3 hides the
@@ -219,10 +254,11 @@ function wiMetaCell(d, opts) {
   // Label names are free text of any length, so this is the chip that gives up width when the
   // cluster runs out. Everything else here is bounded (a date, a priority, an avatar).
   if (showLabels) {
+    var mayLabel = may('manageLabels');
     out.push('<span class="hidden lg:inline-flex min-w-0 max-w-[260px]">' + chip(labelInner, 'labels',
       labels ? 'text-ink' : 'text-faint',
-      labelNames ? (edit ? 'Change labels — ' + labelNames : 'Labels: ' + labelNames) : (edit ? 'Add labels' : 'No labels'),
-      true) + '</span>');
+      labelNames ? (mayLabel ? 'Change labels — ' + labelNames : 'Labels: ' + labelNames) : (mayLabel ? 'Add labels' : 'No labels'),
+      true, mayLabel) + '</span>');
   }
 
   if (opts.action) out.push(opts.action);

@@ -4,7 +4,6 @@ namespace App\Mail;
 
 use App\Models\Project;
 use Illuminate\Bus\Queueable;
-use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Content;
 use Illuminate\Mail\Mailables\Envelope;
@@ -22,8 +21,21 @@ use Illuminate\Queue\SerializesModels;
  * mailable is rebuilt by a worker with no tenancy context, and re-resolving a tenant-scoped
  * project there would come back empty. The project's id and name are read here, in the
  * request, while the context still exists.
+ *
+ * ## NOT queued, deliberately — this is the regression that kept coming back
+ *
+ * It used to be `ShouldQueue`. With `QUEUE_CONNECTION=database` and no worker running, the
+ * send succeeded, a row went into `jobs`, and nothing was ever delivered — while the screen
+ * said "notified by email" and meant it. Nothing failed loudly, so the bug looked like it had
+ * reappeared on its own every time somebody worked without a worker.
+ *
+ * `WorkspaceInviter` already applies the right rule to its own invitation: "an invitation
+ * nobody receives is an invitation that did not happen, and it must not depend on a queue
+ * worker being up." Being added to a project is the same kind of message, and now follows the
+ * same rule. The cost is that adding a member waits on the mail transport; the alternative is
+ * a notification that silently is not one.
  */
-class ProjectMemberAddedMail extends Mailable implements ShouldQueue
+class ProjectMemberAddedMail extends Mailable
 {
     use Queueable, SerializesModels;
 
@@ -39,6 +51,8 @@ class ProjectMemberAddedMail extends Mailable implements ShouldQueue
         public readonly string $inviterName,
         public readonly string $recipientName,
         string $role,
+        /** Who added them — their photo, or their initials (§16). */
+        public readonly ?EmailActor $actor = null,
     ) {
         $this->projectName = (string) $project->name;
         $this->projectUrl = route('projects.work-items', $project);
@@ -50,7 +64,9 @@ class ProjectMemberAddedMail extends Mailable implements ShouldQueue
 
     public function envelope(): Envelope
     {
-        return new Envelope(subject: "You've been added to {$this->projectName} on Project Block");
+        // Names the project, because that is what the reader is deciding whether to care
+        // about — and an inbox truncates everything after the first few words.
+        return new Envelope(subject: "You've been added to {$this->projectName}");
     }
 
     public function content(): Content

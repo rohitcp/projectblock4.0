@@ -300,7 +300,7 @@ class ProjectController extends Controller
 
         return response()->json([
             'ok' => true,
-            'lead' => $lead ? ['id' => $lead->id, 'name' => $lead->displayName(), 'initial' => $lead->initial()] : null,
+            'lead' => $lead ? ['id' => $lead->id, 'name' => $lead->displayName(), 'initial' => $lead->initial(), 'avatar_url' => $lead->avatar_url] : null,
         ]);
     }
 
@@ -473,7 +473,7 @@ class ProjectController extends Controller
             'cover_url' => $project->cover_url,
             'cover_gradient' => $project->cover_gradient,
             'status' => $project->status,
-            'lead' => $lead ? ['id' => $lead->id, 'name' => $lead->displayName(), 'initial' => $lead->initial()] : null,
+            'lead' => $lead ? ['id' => $lead->id, 'name' => $lead->displayName(), 'initial' => $lead->initial(), 'avatar_url' => $lead->avatar_url] : null,
             // Explicit status if set, otherwise fall back to the workspace default state
             // (so a project without a chosen status still reads as "Draft", etc.).
             'state' => ($st = ($project->state_id ? $this->statesMap()->get($project->state_id) : null) ?: $this->defaultState())
@@ -508,6 +508,9 @@ class ProjectController extends Controller
                 'name' => $m->user?->displayName(),
                 'email' => $m->user?->email,
                 'initial' => $m->user?->initial(),
+                // The uploaded photo, so the selector shows the person rather than a letter.
+                // Null for anyone who has not uploaded one — the client falls back to `initial`.
+                'avatar_url' => $m->user?->avatar_url,
             ])->all();
     }
 

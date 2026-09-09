@@ -192,7 +192,8 @@ class ModuleController extends Controller
             ->forProject($project->id)
             ->whereIn('id', $ids)
             ->get()
-            ->filter(fn (WorkItem $i) => Auth::user()->can('update', $i));
+            // Structure, not an edit of the item — §8 "Manage Cycle/Module/Epic".
+            ->filter(fn (WorkItem $i) => Auth::user()->can('manageStructure', $i));
 
         $module->workItems()->syncWithoutDetaching(
             $items->mapWithKeys(fn (WorkItem $i) => [$i->id => ['created_by' => Auth::id()]])->all(),

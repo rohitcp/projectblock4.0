@@ -83,7 +83,7 @@ class ProjectMembersController extends ManagesProjectController
             ]);
         }
 
-        return $this->listResponse($project, $this->inviteMessage($result['status'], $result['email']));
+        return $this->listResponse($project, $this->inviteMessage($result['status'], $result['email'], $result['member'] ?? null));
     }
 
     /**
@@ -117,13 +117,35 @@ class ProjectMembersController extends ManagesProjectController
     }
 
     /** What the admin who clicked Add needs to read when it worked. */
-    private function inviteMessage(string $status, string $email): string
+    private function inviteMessage(string $status, string $email, ?ProjectMember $member = null): string
     {
         return match ($status) {
-            'added' => $email.' was added to the project and has been emailed.',
+            // A person, by name. They are a coworker in this workspace, so there IS a name to
+            // use, and reading somebody's address back to the admin who just picked them from
+            // a list of faces says less than the name already on that list did.
+            'added' => $this->personLabel($member, $email).' was added to the project and notified by email.',
+
+            // The other two are addresses, not people: an invitation goes to somebody who may
+            // have no account yet, so the address is the only identity there is to name.
             'resent' => 'That invitation was already outstanding, so it has been sent again to '.$email.'.',
             default => 'Invitation sent to '.$email.'.',
         };
+    }
+
+    /**
+     * What to call somebody in a confirmation message: their name, or their address.
+     *
+     * NOT `displayName()`, deliberately. That falls back to the local part of the address —
+     * `member-styledesk-test1` — which is neither the name the message asks for nor the
+     * address the rule allows instead, and reads like a truncation bug. This falls back to
+     * the whole address, which at least says something true.
+     */
+    private function personLabel(?ProjectMember $member, string $email): string
+    {
+        $user = $member?->user;
+        $name = trim((string) ($user?->display_name ?: $user?->full_name ?: ''));
+
+        return $name !== '' ? $name : $email;
     }
 
     /** And when it did not. Each one says what to DO, not only what went wrong. */
@@ -160,9 +182,19 @@ class ProjectMembersController extends ManagesProjectController
         $this->guardMembers($project);
         $this->assertBelongs($project, $member);
 
+        // Read before the delete, for the message below — afterwards there is no row to name.
+        $name = $this->personLabel($member, (string) ($member->email ?? ''));
+        $notified = ! $member->isPending()
+            && $member->user
+            && (int) $member->user_id !== (int) Auth::id();
+
         $this->members->remove($project, $member, Auth::user());
 
-        return $this->listResponse($project, 'Member removed from project.');
+        // Only claims the email when one was actually sent. A pending invitation has nobody to
+        // write to, and somebody who removed themselves is not told what they just did.
+        return $this->listResponse($project, $notified
+            ? $name.' was removed from the project and notified by email.'
+            : $name.' was removed from the project.');
     }
 
     /**
@@ -236,18 +268,36 @@ class ProjectMembersController extends ManagesProjectController
     {
         $existing = ProjectMember::query()->where('project_id', $project->id)->pluck('user_id');
 
+        $jobRoles = config('onboarding.roles', []);
+
         return WorkspaceMembership::query()
             ->where('workspace_id', $project->tenant_id)
             ->where('status', WorkspaceMembership::STATUS_ACTIVE)
             ->whereNotIn('user_id', $existing)
-            ->with('user')
+            // `onboardingProfile` eager-loaded with the user: the job role below reads it for
+            // every candidate, and without this the picker costs one query per coworker.
+            ->with(['user.onboardingProfile'])
             ->get()
             ->map(fn (WorkspaceMembership $m) => [
                 'id' => $m->user_id,
                 'name' => $m->user?->displayName(),
                 'email' => $m->user?->email,
                 'initial' => $m->user?->initial(),
+                // The uploaded photo, so the picker shows the person rather than a letter.
+                // Null for anyone who has not uploaded one — the client falls back to `initial`.
+                'avatar_url' => $m->user?->avatar_url,
                 'workspace_role' => $m->role,
+                /*
+                 * What this person DOES — "Designer", "Engineering Manager" — from the role
+                 * they chose at onboarding, so whoever is adding them can tell two similar
+                 * names apart before granting project access.
+                 *
+                 * NOT the workspace role, which is `workspace_role` above: that says what they
+                 * may do, this says what they are, and config/onboarding.php is explicit that
+                 * the latter is "personalization metadata only — never permissions". Null when
+                 * they skipped the step; the picker then shows nothing rather than a guess.
+                 */
+                'job_role' => $jobRoles[$m->user?->onboardingProfile?->role_selection] ?? null,
             ])
             ->sortBy('name')->values()->all();
     }

@@ -35,14 +35,24 @@ class BackofficePasswordReset extends Notification
 
         $minutes = (int) config('auth.passwords.backoffice_users.expire', 30);
 
+        /*
+         * The shared Project Block shell rather than Laravel's markdown mail
+         * (docs/features/transactional-emails.md §20). Laravel's default renders in ITS house
+         * style — a different frame, a different button, no Project Block footer — so a
+         * password reset was the one email that did not look like the product it came from,
+         * which is exactly the email where that matters most.
+         *
+         * The reassurance and the expiry are in the template, said the same way for every
+         * reset, instead of being assembled from `->line()` calls here.
+         */
         return (new MailMessage)
             ->subject('Reset your Back Office password')
-            ->greeting('Back Office password reset')
-            ->line('Somebody asked to reset the password on your Back Office account.')
-            ->action('Set a new password', $url)
-            ->line("This link expires in {$minutes} minutes and can be used once.")
-            // Said plainly, because it is the reassurance that stops somebody clicking a link
-            // they did not ask for "just to check".
-            ->line('If you did not request this, no action is needed — your password has not changed.');
+            ->view('emails.password-reset', [
+                'resetUrl' => $url,
+                'ttlMinutes' => $minutes,
+                'recipientName' => method_exists($notifiable, 'displayName')
+                    ? $notifiable->displayName()
+                    : '',
+            ]);
     }
 }

@@ -300,8 +300,17 @@ class EstimationTest extends ProjectTestCase
             'user_id' => $sam->id, 'role' => ProjectMember::ROLE_CONTRIBUTOR,
         ]));
 
-        // §30: a Contributor may assign an estimate…
+        /*
+         * §30: a Contributor may assign an estimate — on their OWN work item.
+         *
+         * The role matrix scopes a Contributor's edits to what is assigned to them
+         * (docs/features/project-role-permissions.md §8), and sizing a task is something the
+         * person doing it does. The assignment is arranged here because it is a precondition
+         * of the rule under test, not the rule itself.
+         */
         $item = $this->workItem($owner, $project, 'Build the login page');
+        $ws->run(fn () => \App\Models\WorkItem::find($item['id'])->assignees()->sync([$sam->id]));
+
         $this->assign($sam, $project, $item, $values['5']->id)->assertOk();
 
         // …but may not configure the system.

@@ -10,6 +10,8 @@ PB.boot('members', {
       people: b.people, pending: b.pending,
       roleLabels: b.roleLabels, inviteRoles: b.inviteRoles,
       currentUserId: b.currentUserId, endpoints: b.endpoints,
+      // Id of the invitation currently being resent — guards against a double send.
+      resending: null,
       search: '',
       peopleTable: null, pendingTable: null,
       inviteOpen: false, sending: false, inviteResults: {},
@@ -123,7 +125,12 @@ PB.boot('members', {
     },
     runAction: function (act) {
       var m = this.actionMenu; this.actionMenu.open = false;
-      if (m.kind === 'pending') { if (act === 'revoke') this.revoke(m.row); return; }
+      if (m.kind === 'pending') {
+        if (act === 'revoke') this.revoke(m.row);
+        else if (act === 'resend') this.resend(m.row);
+
+        return;
+      }
       this.onPeopleAction(act, m.row);
     },
     onDocMenu: function (e) {
@@ -233,11 +240,37 @@ PB.boot('members', {
       } catch (e) { this.$pb.toast(this.$pb.firstError(e), 'error'); }
       this.remove = { open: false, member: null };
     },
+    /**
+     * What to call an invited person: their name when the address already has an account,
+     * the address itself when it does not — which is the common case here, since most
+     * invitations go to somebody who has not signed up yet.
+     */
+    inviteeLabel: function (inv) {
+      return (inv && (inv.name || inv.email)) || 'them';
+    },
     revoke: async function (inv) {
       try {
         var resp = await this.$pb.api(this.$pb.withId(this.endpoints.revoke, inv.id), { method: 'DELETE' });
-        this.syncPending(resp.pending); this.$pb.toast('Invitation revoked.');
+        this.syncPending(resp.pending);
+        this.$pb.toast('The invitation to ' + this.inviteeLabel(inv) + ' was revoked.');
       } catch (e) { this.$pb.toast(this.$pb.firstError(e), 'error'); }
+    },
+    /**
+     * Send a pending invitation again — for the one that never arrived.
+     *
+     * `resending` holds the invitation's id while it is in flight, so the menu item can say so
+     * and a second click cannot put two emails on the wire. The row list comes back refreshed
+     * because the server re-stamps the expiry, and the "Invited" date is read from it.
+     */
+    resend: async function (inv) {
+      if (this.resending) return;
+      this.resending = inv.id;
+      try {
+        var resp = await this.$pb.api(this.$pb.withId(this.endpoints.resend, inv.id), { method: 'POST' });
+        this.syncPending(resp.pending);
+        this.$pb.toast(resp.message || ('Invitation sent again to ' + this.inviteeLabel(inv) + '.'));
+      } catch (e) { this.$pb.toast(this.$pb.firstError(e), 'error'); }
+      this.resending = null;
     }
   },
   template:
@@ -327,6 +360,7 @@ PB.boot('members', {
     '<button @click="runAction(\'delete\')" class="w-full flex items-center gap-2 px-3 h-8 text-danger hover:bg-red-50 text-left">' + wiIcon('trash', 15) + 'Delete</button>' +
     '</template></template>' +
     '<template v-else>' +
+    '<button @click="runAction(\'resend\')" :disabled="!!resending" class="w-full flex items-center gap-2 px-3 h-8 text-ink hover:bg-hover text-left disabled:opacity-50">' + wiIcon('reply', 15) + '{{ resending ? \'Sending…\' : \'Resend Invitation\' }}</button>' +
     '<button @click="runAction(\'revoke\')" class="w-full flex items-center gap-2 px-3 h-8 text-danger hover:bg-red-50 text-left">' + wiIcon('circle-xmark-thin', 15) + 'Revoke</button>' +
     '</template>' +
     '</div></teleport>' +

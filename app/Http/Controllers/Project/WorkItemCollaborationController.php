@@ -12,6 +12,7 @@ use App\Models\WorkItemUpdate;
 use App\Models\WorkItemWorklog;
 use App\Services\InboxNotifier;
 use App\Services\MentionNotifier;
+use App\Services\WorkItemCommentNotifier;
 use App\Services\MentionSync;
 use App\Services\RichTextSanitizer;
 use App\Services\WorkItemActivityRecorder;
@@ -43,6 +44,7 @@ class WorkItemCollaborationController extends Controller
         private readonly WorkItemActivityRecorder $activity,
         private readonly MentionSync $mentions,
         private readonly MentionNotifier $mentionNotifier,
+        private readonly WorkItemCommentNotifier $commentNotifier,
     ) {}
 
     /** GET /projects/{project}/work-items/{workItem}/feed */
@@ -57,7 +59,15 @@ class WorkItemCollaborationController extends Controller
 
     public function storeComment(Request $request, Project $project, WorkItem $workItem): JsonResponse
     {
-        $this->guard($project, $workItem, 'update');
+        /*
+         * `comment`, not `update`.
+         *
+         * This asked for the edit-the-item ability, which meant the COMMENTER role — whose
+         * entire purpose is commenting — was refused, and a Contributor could not comment on a
+         * colleague's item either. Both are Yes in the matrix
+         * (docs/features/project-role-permissions.md §8).
+         */
+        $this->guard($project, $workItem, 'comment');
 
         $data = $request->validate([
             'content' => ['required', 'string', 'max:'.config('projects.work_item_description_max')],
@@ -93,10 +103,23 @@ class WorkItemCollaborationController extends Controller
             // comment leaves no mention records; the mail waits for the commit.
             $workItem->loadMissing('project');
             if ($workItem->project) {
-                $this->mentionNotifier->mentioned(
-                    $this->mentions->sync(Mention::SOURCE_COMMENT, $comment->id, $content, $workItem->project, $workItem, Auth::user()),
-                    $workItem, Auth::user(), Mention::SOURCE_COMMENT, $content, $comment->id, $comment,
+                $mentioned = $this->mentions->sync(
+                    Mention::SOURCE_COMMENT, $comment->id, $content, $workItem->project, $workItem, Auth::user(),
                 );
+
+                $this->mentionNotifier->mentioned(
+                    $mentioned, $workItem, Auth::user(), Mention::SOURCE_COMMENT, $content, $comment->id, $comment,
+                );
+
+                /*
+                 * Everybody else who should hear about it — the author being replied to, the
+                 * assignee, the people already in the thread, the watchers.
+                 *
+                 * AFTER mentions and given the list of who was mentioned, which is what keeps
+                 * "assignee and also mentioned" to one notification instead of two: the
+                 * mentioned set is the top tier and this excludes it.
+                 */
+                $this->commentNotifier->commented($workItem, $comment, Auth::user(), $mentioned);
             }
         });
 
@@ -105,7 +128,9 @@ class WorkItemCollaborationController extends Controller
 
     public function updateComment(Request $request, Project $project, WorkItem $workItem, WorkItemComment $comment): JsonResponse
     {
-        $this->guard($project, $workItem, 'update');
+        // Editing your own comment is commenting; `guardComment(owner: true)` below is what
+        // keeps it to your own.
+        $this->guard($project, $workItem, 'comment');
         $this->guardComment($workItem, $comment, owner: true);
 
         $content = $this->richText->sanitize($request->input('content'));
@@ -130,7 +155,9 @@ class WorkItemCollaborationController extends Controller
 
     public function destroyComment(Project $project, WorkItem $workItem, WorkItemComment $comment): JsonResponse
     {
-        $this->guard($project, $workItem, 'update');
+        // `guardComment(owner: false)` allows the author OR somebody who runs the project —
+        // which is the matrix's "moderate/delete other comments if required" for an Admin.
+        $this->guard($project, $workItem, 'comment');
         $this->guardComment($workItem, $comment, owner: false);
 
         // Inbox §19: the unread notifications that pointed into this comment go with it —

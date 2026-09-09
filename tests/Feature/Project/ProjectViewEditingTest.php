@@ -194,7 +194,17 @@ class ProjectViewEditingTest extends ProjectTestCase
         $item = $this->workItem($owner, $project, 'Build API');
         $column = $this->column($owner, $project, $view, 'work_item.priority');
 
-        // §14.2: a contributor may change the DATA through someone else's shared View…
+        /*
+         * §14.2: a contributor may change the DATA through someone else's shared View…
+         *
+         * On an item ASSIGNED to them. That is new — the role matrix
+         * (docs/features/project-role-permissions.md §8) scopes a Contributor's edits to their
+         * own work — and the assignment is what this test is NOT about, so it is arranged here
+         * rather than left to chance. The point being made is still the one below: editing
+         * data through a view and editing the view are separate permissions.
+         */
+        $ws->run(fn () => \App\Models\WorkItem::find($item)->assignees()->sync([$contributor->id]));
+
         $this->actingAs($contributor)->patchJson($this->cellUrl($project, $view, $item), [
             'column_id' => $column['id'], 'priority' => 'high',
         ])->assertOk();

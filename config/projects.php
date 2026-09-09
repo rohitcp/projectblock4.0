@@ -113,6 +113,50 @@ return [
     /** Project roles allowed to create and edit work items (§34 permission matrix). */
     'contributor_roles' => ['admin', 'contributor'],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Work item permissions — the "Optional" cells of the role matrix
+    |--------------------------------------------------------------------------
+    |
+    | docs/features/project-role-permissions.md §8 marks a handful of cells
+    | "Optional" rather than Yes or No, and §5 asks for the Guest extras to be
+    | "configurable rather than enabled by default". These are those cells, and
+    | nothing else: every Yes and every No in that matrix is a rule in
+    | WorkItemPolicy, not a setting, because a permission somebody can quietly
+    | flip is not a permission model.
+    |
+    | Defaults are the SAFE reading of the matrix — Optional means off — with one
+    | exception noted below.
+    |
+    */
+    'role_permissions' => [
+
+        /*
+         * "Create Work Item · Contributor · Optional".
+         *
+         * Defaulted ON, alone among these, because it is what the application
+         * already does: turning it off here would take a capability away from
+         * every existing Contributor as a side effect of adding a config block.
+         * A behaviour change should be somebody's decision, not a migration's.
+         */
+        'contributor_can_create' => true,
+
+        /** "Manage Cycle/Module/Epic · Contributor · Optional" — on their OWN assigned items. */
+        'contributor_manages_structure' => false,
+
+        /** "Change Dates · Guest Assigned · Optional". */
+        'guest_can_change_dates' => false,
+
+        /** "Add/Remove Labels · Guest Assigned · Optional". */
+        'guest_can_manage_labels' => false,
+
+        /** "Comment / Reply / @Mention · Guest Other · Optional" (an assigned Guest always may). */
+        'guest_can_comment' => false,
+
+        /** "View History · Guest Other · Optional" (an assigned Guest always may). */
+        'guest_can_view_history' => false,
+    ],
+
     /**
      * Project Settings sections (PRJ-040..044), in sidebar order. `ProjectSettingsController`
      * looks a section up here before rendering, so a key missing from this list 404s — this

@@ -40,6 +40,8 @@ class WorkItemAssignedMail extends Mailable implements ShouldQueue
          * render HTML unevenly, and this is context, not the document.
          */
         public readonly ?string $description = null,
+        /** Who assigned it — their photo, or their initials (§16). */
+        public readonly ?EmailActor $actor = null,
     ) {}
 
     public function envelope(): Envelope

@@ -118,6 +118,10 @@ Route::middleware(['auth', 'workspace.tenancy'])
 
         Route::post('/{project}/work-items/{workItem}/labels', [WorkItemStructureController::class, 'storeLabel'])
             ->whereNumber(['project', 'workItem'])->middleware('throttle:30,1')->name('work-items.labels.store');
+        // The same, for the Create Work Item form — there is no work item id to address yet.
+        // Outside the `work-items/{workItem}` prefix for exactly that reason.
+        Route::post('/{project}/work-item-labels', [WorkItemStructureController::class, 'storeProjectLabel'])
+            ->whereNumber('project')->middleware('throttle:30,1')->name('work-items.labels.create');
         Route::post('/{project}/work-items/{workItem}/links', [WorkItemStructureController::class, 'storeLink'])
             ->whereNumber(['project', 'workItem'])->name('work-items.links.store');
         Route::patch('/{project}/work-items/{workItem}/links/{link}', [WorkItemStructureController::class, 'updateLink'])

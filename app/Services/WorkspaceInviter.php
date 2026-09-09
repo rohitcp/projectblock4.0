@@ -207,6 +207,7 @@ class WorkspaceInviter
                 contextLine: $context['line'] ?? null,
                 contextLabel: $context['label'] ?? null,
                 contextValue: $context['value'] ?? null,
+                actor: \App\Mail\EmailActor::fromUser($inviter),
             ));
         } catch (\Throwable $e) {
             // Never log the token or the link — both carry the raw secret.

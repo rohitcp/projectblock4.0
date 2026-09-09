@@ -1200,12 +1200,33 @@ PB.boot('wiki-collection', {
        `data-tip`, not `title`. A face shows an initial, so its meaning is precisely what is NOT
        written on it — and the native tooltip waits about a second before saying so. */
     '<div class="mt-6 rounded-xl border border-line p-5">' +
+
+    /* The two invitations sit on the HEADING row, at the right edge of the block.
+       They used to sit under the faces, bottom-left, where they read as a continuation of the
+       list of people rather than as the actions that add to it. On the header they line up
+       with the section they act on, and the faces below stay a list of who is here.
+
+       `flex-wrap` and `gap-3` rather than a fixed row: at a narrow width the pair drops under
+       the title instead of squeezing the description into a column of single words. */
+    '<div class="flex flex-wrap items-start justify-between gap-3">' +
+    '<div class="min-w-0">' +
     '<h2 class="text-[13px] font-semibold text-head">Access</h2>' +
     '<p v-if="isPrivate" class="text-[12px] text-sub mt-0.5">' +
     'Only these people can open this collection.</p>' +
     // A public collection needs the difference spelled out, or the list below reads as the limit.
     '<p v-else class="text-[12px] text-sub mt-0.5">' +
     'Everyone in the workspace can read this. These are the people named on it.</p>' +
+    '</div>' +
+
+    '<div v-if="canManage" class="flex flex-wrap items-center gap-2 shrink-0">' +
+    '<button type="button" @click="openInvite" ' +
+    'class="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md border border-stroke text-[13px] font-semibold text-ink hover:bg-hover">' +
+    '<span v-html="icon(\'users\', 14, \'text-faint\')"></span>Invite team member</button>' +
+    '<button type="button" @click="openGuestForm" ' +
+    'class="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md border border-stroke text-[13px] font-semibold text-ink hover:bg-hover">' +
+    '<span v-html="icon(\'globe\', 14, \'text-faint\')"></span>Invite external member</button>' +
+    '</div>' +
+    '</div>' +
 
     '<h3 class="text-[12px] font-semibold text-sub mt-4">Team members</h3>' +
     '<div class="mt-2 flex items-center gap-2 flex-wrap">' +
@@ -1248,19 +1269,9 @@ PB.boot('wiki-collection', {
     'v-html="icon(\'trash\', 14)"></button>' +
     '</span></li></ul></template>' +
 
-    /* The two ways in, named. The dashed "+" that used to sit at the end of the faces is gone:
-       with two kinds of invitation it could only mean one of them, and a control that silently
-       picks is worse than two that say which. Same reason the pencil beside the collection name
-       gave way to the ⋯ menu. */
-    '<div v-if="canManage" class="mt-4 flex flex-wrap items-center gap-2">' +
-    '<button type="button" @click="openInvite" ' +
-    'class="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md border border-stroke text-[13px] font-semibold text-ink hover:bg-hover">' +
-    '<span v-html="icon(\'users\', 14, \'text-faint\')"></span>Invite team member</button>' +
-
-    '<button type="button" @click="openGuestForm" ' +
-    'class="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md border border-stroke text-[13px] font-semibold text-ink hover:bg-hover">' +
-    '<span v-html="icon(\'globe\', 14, \'text-faint\')"></span>Invite external member</button>' +
-    '</div>' +
+    /* The two ways in are named, and they live on the heading row above. The dashed "+" that
+       used to sit at the end of the faces is gone: with two kinds of invitation it could only
+       mean one of them, and a control that silently picks is worse than two that say which. */
     '</div>' +
 
     // ---- pages ----
