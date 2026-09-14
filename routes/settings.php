@@ -60,6 +60,10 @@ Route::middleware(['auth', 'workspace.tenancy', 'workspace.admin'])
         Route::patch('/members/{membership}/role', [MembersSettingsController::class, 'updateRole'])->name('members.role');
         Route::delete('/members/{membership}', [MembersSettingsController::class, 'remove'])->name('members.remove');
         Route::delete('/members/invites/{invitation}', [MembersSettingsController::class, 'revoke'])->name('members.revoke');
+        // Send a pending invitation again — the counterpart to Revoke, on its own throttle
+        // because it is the one action here that puts mail on the wire per click.
+        Route::post('/members/invites/{invitation}/resend', [MembersSettingsController::class, 'resend'])
+            ->middleware('throttle:10,1')->name('members.resend');
 
         // Administration > Security (docs/features/session-timeout.md)
         Route::get('/security', [SecuritySettingsController::class, 'show'])->name('security');

@@ -270,8 +270,22 @@ class ProjectLabelTest extends ProjectTestCase
             'user_id' => $sam->id, 'role' => ProjectMember::ROLE_CONTRIBUTOR,
         ]));
 
-        // §25: a Contributor may assign and remove labels on work items…
+        /*
+         * A Contributor may label a work item ASSIGNED TO THEM, and not one that is not
+         * (docs/features/project-role-permissions.md §8, "Add/Remove Labels": Contributor
+         * Assigned = Yes, Contributor Other = No).
+         *
+         * This test used to assert the wider rule the labels spec's §25 described — any
+         * Contributor, any item. The role matrix supersedes it, so the assertion is now both
+         * halves rather than the permissive one.
+         */
         $item = $this->workItem($owner, $project, 'Something broke');
+
+        // Not theirs: refused.
+        $this->assign($sam, $project, $item, [$label->id])->assertStatus(403);
+
+        // Theirs: allowed.
+        $ws->run(fn () => \App\Models\WorkItem::find($item['id'])->assignees()->sync([$sam->id]));
         $this->assign($sam, $project, $item, [$label->id])->assertOk();
         $this->assign($sam, $project, $item, [])->assertOk();
 

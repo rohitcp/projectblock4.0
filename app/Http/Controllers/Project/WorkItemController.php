@@ -152,20 +152,96 @@ class WorkItemController extends Controller
         return $this->screen($project, $workItem, 'projects.work-item-frame');
     }
 
-    /** PATCH /projects/{project}/work-items/{workItem} — inline row edits (§4.2). */
+    /**
+     * PATCH /projects/{project}/work-items/{workItem} — inline row edits (§4.2).
+     *
+     * ## Authorized FIELD BY FIELD, not once for the request
+     *
+     * Every chip on a row PATCHes this one endpoint, and the permission matrix gives its
+     * fields to different people: an assigned Contributor may change the status and the dates,
+     * only an Admin may change the assignee, and an assigned Guest may change the status and
+     * nothing else. A single `can('update')` here would have answered one question for all of
+     * them — and since `update` is the edit-the-item ability, it would have handed the Guest's
+     * status change to nobody and the Admin's reassignment to every Contributor.
+     *
+     * So the request is decomposed: each field present names the ability it needs, and the
+     * first one this user does not hold refuses the whole request. Refusing the WHOLE request
+     * rather than dropping the offending field is deliberate — silently saving four of
+     * somebody's five changes is worse than saving none and saying which one was refused.
+     */
     public function update(UpdateWorkItemRequest $request, Project $project, WorkItem $workItem): JsonResponse
     {
-        $this->guardItem($project, $workItem, 'update');
+        $this->guardItem($project, $workItem, 'view');
 
-        $item = $this->updater->update($workItem, Auth::user(), $request->validated());
+        $data = $request->validated();
+        $user = Auth::user();
+
+        foreach (static::fieldAbilities() as $field => $ability) {
+            if (! array_key_exists($field, $data)) {
+                continue;
+            }
+
+            abort_unless($user->can($ability, $workItem), 403, static::refusal($field));
+        }
+
+        $item = $this->updater->update($workItem, $user, $data);
 
         return response()->json(['ok' => true, 'item' => $this->payload->card($item)]);
+    }
+
+    /**
+     * Which ability each editable field needs (docs/features/project-role-permissions.md §8).
+     *
+     * A map rather than a chain of ifs, and `static` so the payload builder can read the same
+     * one when it tells the client which chips to disable — the screen and the server must not
+     * be able to disagree about what a role may touch.
+     *
+     * @return array<string, string>
+     */
+    public static function fieldAbilities(): array
+    {
+        return [
+            'title' => 'update',
+            'description' => 'update',
+            'state_id' => 'changeStatus',
+            'priority' => 'changePriority',
+            'start_date' => 'changeDates',
+            'due_date' => 'changeDates',
+            'label_ids' => 'manageLabels',
+            'assignee_ids' => 'changeAssignee',
+            // The item's place in the project's structure — one ability, five fields.
+            'parent_id' => 'manageStructure',
+            'cycle_id' => 'manageStructure',
+            'epic_id' => 'manageStructure',
+            'module_ids' => 'manageStructure',
+            /*
+             * An estimate is a property of the WORK, not a placement in the project's
+             * structure — the person doing the task is the one who sizes it, which is how
+             * every estimation ritual actually runs. So it follows `update` (edit the item)
+             * rather than `manageStructure`, and an assigned Contributor keeps it.
+             */
+            'estimate_value_id' => 'update',
+        ];
+    }
+
+    /** Says WHICH field was refused: "403" alone leaves somebody guessing which chip to avoid. */
+    private static function refusal(string $field): string
+    {
+        return match ($field) {
+            'title', 'description' => 'You do not have permission to edit this work item.',
+            'state_id' => 'You do not have permission to change the status of this work item.',
+            'priority' => 'You do not have permission to change the priority of this work item.',
+            'start_date', 'due_date' => 'You do not have permission to change the dates on this work item.',
+            'label_ids' => 'You do not have permission to change the labels on this work item.',
+            'assignee_ids' => 'Only a project admin can change who a work item is assigned to.',
+            default => 'You do not have permission to change that on this work item.',
+        };
     }
 
     /** POST /projects/{project}/work-items/{workItem}/archive (§4.4). */
     public function archive(Project $project, WorkItem $workItem): JsonResponse
     {
-        $this->guardItem($project, $workItem, 'update');
+        $this->guardItem($project, $workItem, 'archive');
         $this->updater->setArchived($workItem, Auth::user(), true);
 
         return response()->json(['ok' => true, 'message' => 'Work item archived.']);
@@ -174,7 +250,7 @@ class WorkItemController extends Controller
     /** POST /projects/{project}/work-items/{workItem}/restore (§4.4). */
     public function restore(Project $project, WorkItem $workItem): JsonResponse
     {
-        $this->guardItem($project, $workItem, 'update');
+        $this->guardItem($project, $workItem, 'archive');
         $item = $this->updater->setArchived($workItem, Auth::user(), false);
 
         return response()->json(['ok' => true, 'item' => $this->payload->card($item), 'message' => 'Work item restored.']);
@@ -186,7 +262,10 @@ class WorkItemController extends Controller
      */
     public function duplicate(Project $project, WorkItem $workItem): JsonResponse
     {
-        $this->guardItem($project, $workItem, 'update');
+        // Copying is CREATING, so `create` is the ability that matters; the source only has
+        // to be visible. Requiring `update` on it would have stopped a Contributor copying a
+        // colleague's item into their own work, which is not a permission the matrix takes away.
+        $this->guardItem($project, $workItem, 'view');
         abort_unless(Auth::user()->can('create', [WorkItem::class, $project]), 403);
 
         $workItem->loadMissing(['assignees', 'labels']);

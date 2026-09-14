@@ -1,26 +1,17 @@
-{{-- The Back Office verification code (docs/features/backoffice-auth.md, §3).
+{{-- Back Office sign-in code (§9). Same shell as every other Project Block email; the copy
+     names the Back Office so a code for the admin console is never mistaken for an app one. --}}
+<x-email.layout preheader="Your Project Block Back Office code — expires in {{ $ttlMinutes }} minutes."
+                footerNote="If you did not request this code, please contact your administrator.">
 
-     Deliberately plain and short. The one job is the code; everything else on the page is a
-     place for the reader's eye to go instead. The warning at the bottom is the only addition,
-     and it is there because this code opens platform administration rather than an account. --}}
-<div style="font-family: Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif; color: #23272f; line-height: 1.5;">
-  <p style="margin: 0 0 16px; font-size: 15px; font-weight: 600; color: #0f0f10;">Back Office verification</p>
+  <x-email.icon name="code" />
 
-  <p style="margin: 0 0 20px; font-size: 14px;">
-    Use this code to continue signing in to the Back Office.
-  </p>
+  <x-email.heading>Your Back Office code</x-email.heading>
+  <x-email.text>Enter this code to finish signing in to the Project Block Back Office.</x-email.text>
 
-  <p style="margin: 0 0 20px; font-size: 30px; font-weight: 700; letter-spacing: 6px; color: #0f0f10;">
-    {{ $code }}
-  </p>
+  <x-email.code :code="$code" />
 
-  <p style="margin: 0 0 20px; font-size: 13px; color: #6b7280;">
+  <x-email.text muted>
     This code expires in {{ $ttlMinutes }} minutes and can be used once.
-  </p>
-
-  <p style="margin: 0; font-size: 13px; color: #6b7280;">
-    If you did not request it, somebody entered your address on the Back Office sign-in screen.
-    The code alone does not grant access — a password is still required — but please tell your
-    platform administrator.
-  </p>
-</div>
+    Do not share this code with anyone.
+  </x-email.text>
+</x-email.layout>

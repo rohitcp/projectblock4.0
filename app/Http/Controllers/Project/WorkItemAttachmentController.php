@@ -32,9 +32,17 @@ class WorkItemAttachmentController extends Controller
     {
         abort_unless($workItem->project_id === $project->id, 404);
 
-        // Attaching is a write, gated exactly like editing the item is (§34).
-        if (! Auth::user()->can('create', [WorkItem::class, $project])) {
-            return $this->failure('You do not have permission to attach files here.', 403);
+        /*
+         * `attach` on THIS item, not `create` on the project.
+         *
+         * The old check asked whether the person could create work items here, which let any
+         * Contributor attach a file to anybody's item. The matrix scopes item attachments to
+         * the assignee (and Admins); a Contributor or Commenter looking at somebody else's
+         * item is "Comment only" — they may attach to their own comment, which is a different
+         * endpoint, not to the item.
+         */
+        if (! Auth::user()->can('attach', $workItem)) {
+            return $this->failure('You do not have permission to attach files to this work item.', 403);
         }
 
         $files = collect($request->allFiles())
@@ -159,7 +167,20 @@ class WorkItemAttachmentController extends Controller
     {
         abort_unless($workItem->project_id === $project->id, 404);
         abort_unless($attachment->work_item_id === $workItem->id, 404);
-        abort_unless(Auth::user()->can('create', [WorkItem::class, $project]), 404);
+
+        /*
+         * Removing one takes the same ability as adding one, plus the matrix's "Remove OWN
+         * attachments" for a Contributor: an Admin may remove anybody's, everyone else only
+         * what they uploaded. Without the second half, one assignee could delete another
+         * person's file from a shared item and nothing would say who did.
+         */
+        abort_unless(Auth::user()->can('attach', $workItem), 403);
+        abort_unless(
+            Auth::user()->can('delete', $workItem)
+                || (int) $attachment->uploaded_by === (int) Auth::id(),
+            403,
+            'You can only remove attachments you uploaded.',
+        );
 
         // The file goes first, but a failure to remove it does NOT stop the row going: an
         // orphaned blob is recoverable, a row pointing at nothing is a permanent broken link.

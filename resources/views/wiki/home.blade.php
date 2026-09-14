@@ -33,15 +33,30 @@
       </div>
 
       {{-- A fact about the WORKSPACE, not about a list, so it belongs on the Wiki's front door
-           and nowhere else. --}}
+           and nowhere else.
+
+           An info CARD rather than the loose line of grey text this used to be: as bare text
+           at the foot of the page it read as a leftover caption, and the one thing it exists
+           to offer — the way to turn the feature off — was the least visible part of it.
+
+           Neutral, not amber. The tinted-warning panel this borrows its shape from (see
+           `epics.js`) means "something is switched OFF and you should know"; this says the
+           opposite, and dressing good news as a warning is how people learn to ignore both. --}}
       @if ($section === 'home')
-        <div class="px-5 sm:px-8 pb-8 text-[12px] text-sub">
-          @if (auth()->user()->currentWorkspace && auth()->user()->can('manageSettings', auth()->user()->currentWorkspace))
-            Wiki is enabled for this workspace. You can turn it off at any time in
-            <a href="{{ route('settings.general') }}" class="text-brand font-semibold hover:underline">Settings &rarr; General</a>.
-          @else
-            Wiki is enabled for this workspace. A workspace owner or admin can turn it off in Settings.
-          @endif
+        {{-- `pt-4`: the Vue root above ends flush with its own card, so without a top gap
+             the two cards touch and read as one panel with a line through it. --}}
+        <div class="px-5 sm:px-8 pt-4 pb-8">
+          <div class="flex items-start gap-3 rounded-lg border border-line bg-sel px-4 py-3">
+            <span class="text-sub shrink-0 mt-px">{!! pb_icon('circle-info', 16) !!}</span>
+            <p class="text-[13px] leading-relaxed text-ink">
+              @if (auth()->user()->currentWorkspace && auth()->user()->can('manageSettings', auth()->user()->currentWorkspace))
+                Wiki is enabled for this workspace. You can turn it off at any time in
+                <a href="{{ route('settings.general') }}" class="text-brand font-semibold hover:underline">Settings &rarr; General</a>.
+              @else
+                Wiki is enabled for this workspace. A workspace owner or admin can turn it off in Settings.
+              @endif
+            </p>
+          </div>
         </div>
       @endif
     </main>

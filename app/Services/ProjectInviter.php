@@ -255,12 +255,15 @@ class ProjectInviter
     private function sendAddedEmail(Project $project, Workspace $workspace, User $actor, User $user, string $role): void
     {
         try {
-            Mail::to($user->email)->send(new ProjectMemberAddedMail(
+            // sendNow, not send: see the note on ProjectMemberAddedMail for why this must not
+            // depend on a queue worker being up. Same rule as the workspace invitation above.
+            Mail::to($user->email)->sendNow(new ProjectMemberAddedMail(
                 project: $project,
                 workspaceName: (string) ($workspace->name ?? ''),
                 inviterName: $actor->displayName(),
                 recipientName: $user->displayName(),
                 role: $role,
+                actor: \App\Mail\EmailActor::fromUser($actor),
             ));
         } catch (\Throwable $e) {
             Log::warning('project.member.added_email_failed', [

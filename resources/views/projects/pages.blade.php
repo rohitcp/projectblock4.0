@@ -36,6 +36,7 @@
   <script defer src="{{ pb_asset('assets/js/projects/work-items.js') }}"></script>
 
   <script defer src="{{ pb_asset('assets/js/projects/pages.js') }}"></script>
+  @include('partials.image-zoom')
 </head>
 <body class="bg-white text-ink h-screen flex flex-col overflow-hidden text-[13px]">
 

@@ -35,6 +35,8 @@ class WorkItemStatusChangedMail extends Mailable implements ShouldQueue
         public readonly ?string $fromState,
         public readonly ?string $toState,
         public readonly string $url,
+        /** Who moved it — their photo, or their initials (§16). */
+        public readonly ?EmailActor $actor = null,
     ) {}
 
     public function envelope(): Envelope

@@ -270,6 +270,8 @@ class WorkItemScreenPayload
             'pageSearch' => $withId('projects.work-items.pages.search'),
             'pages' => $withId('projects.work-items.pages.store'),
             'createLabel' => $withId('projects.work-items.labels.store'),
+            // The same, for the Create form's picker — no work item exists to address there.
+            'createProjectLabel' => route('projects.work-items.labels.create', $project),
             // The `@` autocomplete's source (mentions §5). Project-scoped, because who may
             // be mentioned is a question about a project (§16).
             'mentionUsers' => route('projects.mentionable-users', $project),
@@ -334,6 +336,41 @@ class WorkItemScreenPayload
      * @param  array<string, mixed>|null  $concern  Latest At Risk / Off Track update, likewise.
      * @return array<string, mixed> The row payload the Tabulator grid renders.
      */
+    /**
+     * What the signed-in user may do to ONE work item.
+     *
+     * Per item, not per screen. `canEdit` used to be a single boolean computed once for the
+     * whole grid, which was true while "may edit" was a project-wide question. It is not any
+     * more: the matrix distinguishes "Contributor Assigned" from "Contributor Other", so two
+     * rows side by side can legitimately disagree, and a screen-wide flag can only be wrong
+     * about one of them.
+     *
+     * The keys are the policy's ability names, so the client never restates a rule — it asks
+     * "may I?" and the server has already answered. §9 of the requirement is explicit that
+     * hiding a control is not enforcement, and it is not: every one of these has a matching
+     * server-side check. This is only so the UI does not offer what would then be refused.
+     *
+     * @return array<string, bool>
+     */
+    private function abilities(WorkItem $item): array
+    {
+        $user = Auth::user();
+
+        if (! $user) {
+            return [];
+        }
+
+        $out = [];
+        foreach ([
+            'update', 'delete', 'archive', 'changeStatus', 'changePriority', 'changeDates',
+            'manageLabels', 'changeAssignee', 'manageStructure', 'comment', 'attach', 'viewHistory',
+        ] as $ability) {
+            $out[$ability] = $user->can($ability, $item);
+        }
+
+        return $out;
+    }
+
     public function card(WorkItem $item, ?int $blockedBy = null, ?array $concern = null, ?array $reactions = null): array
     {
         $blockedBy ??= $this->blockers->counts([$item->id])[$item->id] ?? 0;
@@ -347,6 +384,8 @@ class WorkItemScreenPayload
             'id' => $item->id,
             'identifier' => $item->identifier,
             'title' => $item->title,
+            // What THIS viewer may do to THIS item — see abilities() below.
+            'abilities' => $this->abilities($item),
             // Which project this row belongs to. Redundant on a project's own list, where
             // every row shares one — and load-bearing on Your Work, where a row carries the
             // project chip and every picker and endpoint is resolved from it.

@@ -55,6 +55,7 @@ class WorkItemAssignmentNotifier
                 $item->description,
                 (int) config('projects.excerpt.email'),
             ),
+            actor: \App\Mail\EmailActor::fromUser($actor, 'Someone'),
         );
 
         $email = $assignee->email;

@@ -27,7 +27,7 @@ PB.boot('project-members', {
          workspace; `email` is an address that may not have an account yet. The SERVER decides
          which of the two a given address turns out to be — see ProjectInviter — so the screen
          does not have to ask "are they already here?" before it can offer the field. */
-      addForm: { user_id: '', email: '', role: b.defaultRole || 'contributor' },
+      addForm: { user_id: '', role: b.defaultRole || 'contributor' },
       addError: '',
       resending: 0,
       roleModal: { open: false, member: null, role: '', saving: false },
@@ -63,11 +63,27 @@ PB.boot('project-members', {
     filterOptions: function () {
       return [{ value: 'all', label: 'All Roles' }].concat(this.roleOptions);
     },
-    /** §9: only active coworkers not already on the project. */
+    /**
+     * §9: only active coworkers not already on the project.
+     *
+     * Face, name, and what they do — the three things somebody deciding whether to grant
+     * project access actually needs. `pb-combo` renders `avatar` when there is one and falls
+     * back to `initial`, which is the same avatar rule the rest of the app follows.
+     *
+     * The job role goes in quotation marks and the address does not appear: the row used to
+     * be one run-on string of name, email and workspace role, which read as three fields
+     * rather than one person and made two similarly-named coworkers no easier to tell apart.
+     */
     candidateOptions: function () {
-      var self = this;
       return this.candidates.map(function (c) {
-        return { value: String(c.id), label: c.name + ' · ' + c.email + ' · ' + self.workspaceRoleLabel(c.workspace_role) };
+        return {
+          value: String(c.id),
+          label: c.name,
+          // Omitted rather than guessed when they skipped the onboarding step.
+          desc: c.job_role ? '“' + c.job_role + '”' : '',
+          avatar: c.avatar_url || '',
+          initial: c.initial || ''
+        };
       });
     },
     addRoleDescription: function () {
@@ -75,12 +91,9 @@ PB.boot('project-members', {
       var r = this.roleList.find(function (x) { return x.key === self.addForm.role; });
       return r ? r.description : '';
     },
-    /* Either half of the form is enough, and never both at once — filling one disables the
-       other, so "which did I mean?" is never a question the person or the server has to ask. */
-    canAdd: function () {
-      return !!this.addForm.user_id || /\S+@\S+\.\S+/.test((this.addForm.email || '').trim());
-    },
-    addingByEmail: function () { return !this.addForm.user_id && !!(this.addForm.email || '').trim(); },
+    /* One way in: a coworker who is already in this workspace. Inviting a stranger by address
+       was removed from this screen deliberately — see the note on the Add Member modal. */
+    canAdd: function () { return !!this.addForm.user_id; },
     memberCount: function () { return this.members.length; },
     isEmpty: function () { return this.members.length === 0; }
   },
@@ -208,7 +221,7 @@ PB.boot('project-members', {
     // ---------- Add Member (§7-§11) ----------
     openAdd: function () {
       if (!this.canManage) return;
-      this.addForm = { user_id: '', email: '', role: this.defaultRole };
+      this.addForm = { user_id: '', role: this.defaultRole };
       this.addError = '';
       this.addOpen = true;
     },
@@ -217,11 +230,7 @@ PB.boot('project-members', {
       this.adding = true;
       this.addError = '';
 
-      // Only the one that was used is sent. Sending both would make the server choose, and the
-      // person clicking Add would have no idea which of the two it acted on.
-      var body = this.addForm.user_id
-        ? { user_id: this.addForm.user_id, role: this.addForm.role }
-        : { email: this.addForm.email.trim(), role: this.addForm.role };
+      var body = { user_id: this.addForm.user_id, role: this.addForm.role };
 
       try {
         var resp = await this.$pb.api(this.endpoints.store, { method: 'POST', body: body });
@@ -229,11 +238,9 @@ PB.boot('project-members', {
         this.addOpen = false;
         this.$pb.toast(resp.message || 'Member added to project successfully.');
       } catch (e) {
-        var msg = this.$pb.firstError(e);
-        // Kept in the DIALOG rather than thrown as a toast: the dialog stays open, and every
-        // one of these messages is about the address still sitting in the field above it.
-        if (!this.addForm.user_id) this.addError = msg;
-        else this.$pb.toast(msg, 'error');
+        // Kept in the DIALOG rather than thrown as a toast: it stays open, and the message is
+        // about the coworker still selected in it.
+        this.addError = this.$pb.firstError(e);
       }
       this.adding = false;
     },
@@ -324,22 +331,16 @@ PB.boot('project-members', {
     '</div>' +
 
     // ===== Add Member modal (§7, §32) =====
+    // Coworkers only. The "or invite by email" half was removed on purpose: this screen adds
+    // people who are already in the workspace, and bringing a stranger into the workspace is a
+    // different decision made in a different place (Workspace → Members). Existing pending
+    // invitations are unaffected — their rows keep their Invited badge and Resend action.
     '<pb-modal :open="addOpen" title="Add Member to Project" @close="addOpen=false">' +
-    '<p class="text-[13px] text-sub mb-3">Pick a coworker from this Workspace, or invite somebody by email. Either way they are emailed about it.</p>' +
+    '<p class="text-[13px] text-sub mb-3">Pick a coworker from this Workspace. They are emailed about it and can open the project straight away.</p>' +
     '<label class="block text-[13px] font-medium text-ink mb-1.5">Coworker</label>' +
-    '<pb-combo v-model="addForm.user_id" :options="candidateOptions" placeholder="Search workspace members…" :disabled="addingByEmail"/>' +
+    '<pb-combo v-model="addForm.user_id" :options="candidateOptions" placeholder="Search workspace members…" @update:modelValue="addError = \'\'"/>' +
     '<p v-if="!candidateOptions.length" class="text-[12px] text-sub mt-1.5">Everyone in this workspace is already on the project.</p>' +
-
-    // The two halves are alternatives, not a form with two required fields — hence "or", and
-    // hence each disabling the other.
-    '<div class="flex items-center gap-3 my-3"><span class="flex-1 h-px bg-line"></span>' +
-    '<span class="text-[11px] uppercase tracking-wide text-faint">or invite by email</span>' +
-    '<span class="flex-1 h-px bg-line"></span></div>' +
-    '<input v-model="addForm.email" type="email" class="pb-input" placeholder="name@company.com" ' +
-    ':disabled="!!addForm.user_id" @input="addError = \'\'" @keyup.enter="submitAdd" />' +
     '<p v-if="addError" class="mt-1.5 text-[12px] text-danger">{{ addError }}</p>' +
-    '<p v-else-if="addingByEmail" class="mt-1.5 text-[12px] text-sub">' +
-    'If they are already in this workspace they are added straight away. If not, they get an invitation and join the project when they accept.</p>' +
 
     '<label class="block text-[13px] font-medium text-ink mt-4 mb-1.5">Project Role</label>' +
     '<pb-combo :searchable="false" v-model="addForm.role" :options="roleOptions"/>' +
@@ -347,7 +348,7 @@ PB.boot('project-members', {
     '<template #footer>' +
     '<button class="h-9 px-4 rounded-md border border-stroke text-[13px] font-semibold text-ink hover:bg-hover" @click="addOpen=false">Cancel</button>' +
     '<button class="h-9 px-4 rounded-md bg-brand hover:bg-brand-dark text-white text-[13px] font-semibold disabled:opacity-50" :disabled="!canAdd || adding" @click="submitAdd">' +
-    '{{ adding ? (addingByEmail ? \'Sending…\' : \'Adding…\') : (addingByEmail ? \'Send Invitation\' : \'Add Member\') }}</button>' +
+    '{{ adding ? \'Adding…\' : \'Add Member\' }}</button>' +
     '</template></pb-modal>' +
 
     // ===== Change role modal (§13) =====

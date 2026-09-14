@@ -33,6 +33,7 @@
          setup wizard's step 4 does (P16), and reads it at parse time. --}}
     <script defer src="{{ pb_asset('assets/js/help-center/status-card.js') }}"></script>
     <script defer src="{{ pb_asset('assets/js/help-center/space-settings.js') }}"></script>
+    @include('partials.image-zoom')
   @endif
 @endpush
 

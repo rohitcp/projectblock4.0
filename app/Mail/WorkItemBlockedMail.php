@@ -28,6 +28,8 @@ class WorkItemBlockedMail extends Mailable implements ShouldQueue
         public readonly string $actorName,
         public readonly array $blockers,
         public readonly string $url,
+        /** Who blocked it — their photo, or their initials (§16). */
+        public readonly ?EmailActor $actor = null,
     ) {}
 
     public function envelope(): Envelope

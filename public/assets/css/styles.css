@@ -241,6 +241,58 @@ input[type="color"].pb-color-input::-webkit-color-swatch-wrapper { padding: 0; }
 input[type="color"].pb-color-input::-webkit-color-swatch { border: 1px solid #d1d5db; border-radius: 6px; }
 input[type="color"].pb-color-input::-moz-color-swatch { border: 1px solid #d1d5db; border-radius: 6px; }
 
+/* The single-swatch variant, for the compact "Create label" popover.
+
+   One small outlined square that IS the native colour input, rather than the
+   row of presets `.pb-color-input` sits in. Clicking it opens the platform's
+   picker, so any colour is reachable — which the eight fixed swatches it
+   replaced could not offer.
+
+   Square, and the same 6px radius as `.pb-color-input` above: a round dot in
+   this app means a label's colour as WORN (the chips in the pickers and on the
+   rows), so a round control here read as one of those rather than as something
+   to click.
+
+   EMPTY BY DEFAULT. `<input type="color">` always carries a value (black, if
+   nothing is set), so "no colour chosen yet" cannot be expressed by the
+   control itself. `.is-empty` hides its swatch behind a dashed outline, and the
+   model holds an empty string until the user actually picks — which is what
+   lets the server assign the next palette colour for somebody who never
+   opened the picker, instead of silently making every unattended label black.
+   ------------------------------------------------------------------ */
+input[type="color"].pb-color-swatch {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+input[type="color"].pb-color-swatch::-webkit-color-swatch-wrapper { padding: 0; }
+input[type="color"].pb-color-swatch::-webkit-color-swatch {
+  border: 1px solid rgba(15, 15, 16, .15);
+  border-radius: 6px;
+}
+input[type="color"].pb-color-swatch::-moz-color-swatch {
+  border: 1px solid rgba(15, 15, 16, .15);
+  border-radius: 6px;
+}
+/* Nothing picked yet: an empty outline, not a black square. */
+input[type="color"].pb-color-swatch.is-empty::-webkit-color-swatch {
+  background: transparent !important;
+  border: 1.5px dashed #b6bcc4;
+}
+input[type="color"].pb-color-swatch.is-empty::-moz-color-swatch {
+  background: transparent !important;
+  border: 1.5px dashed #b6bcc4;
+}
+input[type="color"].pb-color-swatch:hover::-webkit-color-swatch { border-color: #1b5f8a; }
+input[type="color"].pb-color-swatch:hover::-moz-color-swatch { border-color: #1b5f8a; }
+input[type="color"].pb-color-swatch:focus-visible { outline: 2px solid #1b5f8a; outline-offset: 2px; }
+
 
 /* ------------------------------------------------------------------
    Collapsible sidebar
@@ -600,4 +652,143 @@ input[type="color"].pb-color-input::-moz-color-swatch { border: 1px solid #d1d5d
 /* Respect a reduced-motion preference: keep the ring, drop the rotation. */
 @media (prefers-reduced-motion: reduce) {
   ._moretogether-spinner { animation: none; }
+}
+
+/* ===========================================================================
+   Image zoom — a shared component (assets/js/image-zoom.js)
+
+   Every rich-text body in this application renders stored HTML that can contain
+   a pasted image: work item comments and descriptions, wiki pages, drafts,
+   project pages, and the help centre's requests and replies. They are written
+   by five different screens and three different editors, so the behaviour that
+   makes a posted image readable — a sensible width, a zoom control, a preview —
+   lives here and in one script rather than in each of them.
+
+   HERE, in styles.css, because that is the one stylesheet every screen loads;
+   work-items.css (where this started) is absent from the help centre entirely.
+
+   Sizing is split with the script on purpose. The 50–75% share depends on the
+   image's INTRINSIC width, which CSS cannot read, so the script sets one
+   `max-width` on the figure. Everything that does not need to know the file is
+   here, where it applies even if the script has not run yet.
+
+   The read-view qualifiers on the image rule are load-bearing: several screens
+   load a stylesheet AFTER this one that carries its own `.wi-rich img` block,
+   and an unqualified `.pb-figure > img` would tie with it on specificity and
+   lose on order. Two classes puts this rule ahead of all of them.
+   =========================================================================== */
+.pb-figure {
+  position: relative;
+  display: inline-block;
+  /* The width lives HERE, not on the image. A percentage on the child resolves
+     against this wrapper, whose own width is shrink-to-fit — so the wrapper
+     stayed the full column width while the picture inside it shrank, and the
+     zoom control sat in empty space to the right of the image it belongs to. */
+  max-width: 100%;
+  margin: 12px 0;
+  line-height: 0;          /* no descender gap under the picture */
+}
+.wi-rich .pb-figure > img,
+.wk-read .pb-figure > img,
+.pb-figure > img {
+  display: block;
+  width: 100%;
+  height: auto;
+  /* No `max-height` here: the height cap is folded into the figure's own
+     max-width by the script (as `60vh x aspect ratio`), so a tall portrait
+     gives up WIDTH to stay short instead of letterboxing inside a box that
+     keeps the width it no longer needs. */
+  max-height: none;
+  margin: 0;
+  /* A light grey board around every posted image.
+     A screenshot is usually white to its own edges, so without a border it
+     bleeds into the comment card and the reader cannot see where the picture
+     stops and the page resumes. The grey fill behind it does the same job for
+     a transparent PNG, which would otherwise show the card through its
+     background and read as broken. Same #e5e7eb the app rules and dividers
+     use, so the frame belongs to the page rather than announcing itself. */
+  background: #f6f7f8;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  cursor: zoom-in;
+}
+.pb-figure__zoom {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  /* Dark chip with its own contrast rather than a tint of the page: it sits on
+     top of an arbitrary picture, and a light control disappears against a light
+     screenshot — which is most screenshots. */
+  background: rgba(15, 15, 16, .55);
+  color: #fff;
+  cursor: pointer;
+  opacity: .85;
+  transition: opacity .12s ease, background .12s ease;
+}
+.pb-figure:hover .pb-figure__zoom,
+.pb-figure__zoom:focus-visible { opacity: 1; background: rgba(15, 15, 16, .78); }
+
+/* Above the work item drawer (85), the comment modal (100) and the mention
+   list (130) — the preview is opened from inside all three. */
+.pb-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  background: rgba(15, 15, 16, .8);
+}
+.pb-lightbox.is-open { display: flex; }
+.pb-lightbox__img {
+  /* Fits the viewport with the padding above accounted for, ratio intact. */
+  max-width: calc(100vw - 64px);
+  max-height: calc(100vh - 64px);
+  width: auto;
+  height: auto;
+  border-radius: 8px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .45);
+}
+/* Solid and light, with a dark glyph.
+   A translucent white chip is invisible in the one place it matters: a tall
+   screenshot fills the viewport, so the close button lands ON the picture
+   rather than on the backdrop it was designed against — and most screenshots
+   are white. An opaque chip reads the same over the dimmed page and over the
+   image, which is the only property this control actually needs. */
+.pb-lightbox__close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(15, 15, 16, .1);
+  border-radius: 8px;
+  background: #fff;
+  color: #0f0f10;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .35);
+  transition: background .12s ease, color .12s ease;
+}
+.pb-lightbox__close:hover { background: #0f0f10; color: #fff; border-color: #0f0f10; }
+.pb-lightbox__close:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+body.pb-lightbox-open { overflow: hidden; }
+
+/* Narrow screens: the 50–75% band is pointless when the column is already the
+   width of the phone, so an image takes what there is and the controls grow to
+   a comfortable touch target. */
+@media (max-width: 640px) {
+  .pb-figure { max-width: 100% !important; }
+  .pb-figure__zoom { width: 32px; height: 32px; opacity: 1; }
+  .pb-lightbox { padding: 12px; }
+  .pb-lightbox__img { max-width: calc(100vw - 24px); max-height: calc(100vh - 24px); }
+  .pb-lightbox__close { top: 10px; right: 10px; width: 40px; height: 40px; }
 }

@@ -286,7 +286,9 @@ class CycleController extends Controller
             ->where(fn ($q) => $q->whereNull('cycle_id')->orWhere('cycle_id', '!=', $cycleId))
             ->get()
             // Never move something the user is not allowed to touch, even in bulk.
-            ->filter(fn (WorkItem $i) => $actor->can('update', $i));
+            // Putting an item INTO a cycle is a structure change, not an edit of the item —
+            // see docs/features/project-role-permissions.md §8 "Manage Cycle/Module/Epic".
+            ->filter(fn (WorkItem $i) => $actor->can('manageStructure', $i));
 
         return DB::transaction(function () use ($items, $actor, $cycleId) {
             foreach ($items as $item) {

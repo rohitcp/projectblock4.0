@@ -116,9 +116,17 @@ class InvitationAcceptTest extends TestCase
     {
         [$owner, $workspace] = $this->owner();
 
-        // Unknown token — same panel as a cancelled one, so it cannot be used to probe (§73).
+        /*
+         * Unknown token — the SAME panel a revoked one gets, so it cannot be used to probe
+         * which invitations exist (§73). That equality is the property under test, and it is
+         * asserted again at the bottom.
+         *
+         * The heading changed from "Invitation no longer available": resending an invitation
+         * retires the previous token, so most links that land here are superseded rather than
+         * cancelled, and the old copy told those people something untrue.
+         */
         $this->get(route('invitations.show', ['token' => str_repeat('a', 64)]))
-            ->assertOk()->assertSee('Invitation no longer available');
+            ->assertOk()->assertSee('Invitation link no longer valid');
 
         $expiredToken = $this->inviteAndCaptureToken($owner, 'expired@example.com');
         $workspace->run(fn () => WorkspaceInvitation::where('email', 'expired@example.com')
@@ -136,8 +144,9 @@ class InvitationAcceptTest extends TestCase
         $workspace->run(fn () => WorkspaceInvitation::where('email', 'revoked@example.com')
             ->first()->forceFill(['status' => 'revoked'])->save());
 
+        // Word for word what the unknown token got above — see the note there.
         $this->get(route('invitations.show', ['token' => $revokedToken]))
-            ->assertOk()->assertSee('Invitation no longer available');
+            ->assertOk()->assertSee('Invitation link no longer valid');
     }
 
     public function test_an_existing_user_signed_in_with_a_matching_email_joins_in_one_step(): void

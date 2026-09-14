@@ -30,6 +30,7 @@
   <link rel="stylesheet" href="{{ pb_asset('assets/css/styles.css') }}" />
   {{-- The rich-text read styles the page bodies were written in. --}}
   <link rel="stylesheet" href="{{ pb_asset('assets/css/work-items.css') }}" />
+  @include('partials.image-zoom')
 </head>
 {{-- The viewport IS the page: header pinned, sidebar and document scrolling independently.
      `min-h-screen` was letting the whole document scroll as one, which took the navigation

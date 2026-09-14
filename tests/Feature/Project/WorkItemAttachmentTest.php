@@ -164,9 +164,15 @@ class WorkItemAttachmentTest extends ProjectTestCase
             'file-0' => UploadedFile::fake()->create('mine.pdf', 4, 'application/pdf'),
         ])->assertForbidden();
 
+        /*
+         * 403, not 404. The viewer can already SEE this attachment — the index above returned
+         * it by name — so answering "not found" when they try to remove it denies something
+         * they are looking at. §9 of docs/features/project-role-permissions.md asks for a
+         * clear permission error, and 404 is only honest where the existence itself is secret.
+         */
         $this->actingAs($viewer)
             ->deleteJson(route('projects.work-items.attachments.destroy', $route + ['attachment' => $row->id]))
-            ->assertNotFound();
+            ->assertForbidden();
 
         $this->assertNotNull(WorkItemAttachment::find($row->id));
     }

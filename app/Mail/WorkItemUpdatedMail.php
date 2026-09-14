@@ -35,6 +35,8 @@ class WorkItemUpdatedMail extends Mailable implements ShouldQueue
         public readonly string $updatedAt,
         public readonly string $url,
         public readonly array $changes,
+        /** Who made the change — their photo, or their initials (§16). */
+        public readonly ?EmailActor $actor = null,
     ) {}
 
     public function envelope(): Envelope

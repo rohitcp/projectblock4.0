@@ -42,6 +42,8 @@ class MentionedMail extends Mailable implements ShouldQueue
          * otherwise print the same paragraph twice under two headings.
          */
         public readonly ?string $description = null,
+        /** Who mentioned them — their photo, or their initials (§16). */
+        public readonly ?EmailActor $actor = null,
     ) {}
 
     public function envelope(): Envelope

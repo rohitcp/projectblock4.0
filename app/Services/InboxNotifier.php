@@ -133,6 +133,53 @@ class InboxNotifier
     }
 
     /**
+     * One Inbox row for a comment or a reply (docs/features/work-item-comment-notifications.md).
+     *
+     * `WorkItemCommentNotifier` has already decided WHO and at which tier; this only writes it.
+     * Both types share a method because they differ by one word — the type — and splitting
+     * them would be two copies of the same de-duplication rule.
+     *
+     * De-duplicated per person, per comment, per type: a comment saved twice, or an edit that
+     * re-runs the pipeline, must not stack rows for the same event.
+     */
+    public function commentEvent(
+        string $type,
+        User $recipient,
+        WorkItem $item,
+        WorkItemComment $comment,
+        ?User $actor,
+        string $excerpt,
+    ): void {
+        if ($actor && (int) $recipient->id === (int) $actor->id) {
+            return;
+        }
+
+        $exists = InboxNotification::query()
+            ->for($recipient->id)
+            ->unread()
+            ->where('type', $type)
+            ->where('comment_id', $comment->id)
+            ->exists();
+
+        if ($exists) {
+            return;
+        }
+
+        $this->create([
+            'recipient_id' => $recipient->id,
+            'actor_id' => $actor?->id,
+            'type' => $type,
+            'project_id' => $item->project_id,
+            'work_item_id' => $item->id,
+            'comment_id' => $comment->id,
+            'source_type' => Mention::SOURCE_COMMENT,
+            'source_id' => $comment->id,
+            'title' => $item->title,
+            'excerpt' => $excerpt,
+        ]);
+    }
+
+    /**
      * Write the row, then say so on the wire (§27).
      *
      * Every creation path goes through here so the broadcast cannot be forgotten by whichever
@@ -182,8 +229,22 @@ class InboxNotifier
 
         $assignment = (int) ($byType[InboxNotification::TYPE_ASSIGNMENT] ?? 0);
         $mention = (int) ($byType[InboxNotification::TYPE_MENTION] ?? 0);
+        $reply = (int) ($byType[InboxNotification::TYPE_REPLY] ?? 0);
+        $comment = (int) ($byType[InboxNotification::TYPE_COMMENT] ?? 0);
 
-        return ['assignment' => $assignment, 'mention' => $mention, 'all' => $assignment + $mention];
+        /*
+         * `all` sums the COLLECTION, not the two named tabs. It used to be
+         * `$assignment + $mention`, which meant every type added after those two would be
+         * written to the Inbox, listed by the endpoint, and left out of the badge — present
+         * everywhere except the one number that tells somebody to go and look.
+         */
+        return [
+            'assignment' => $assignment,
+            'mention' => $mention,
+            'reply' => $reply,
+            'comment' => $comment,
+            'all' => (int) $byType->sum(),
+        ];
     }
 
     /**

@@ -38,10 +38,7 @@ return new class extends Migration
             $table->unique(['project_id', 'email'], 'project_members_project_email_unique');
         });
 
-        // Raw rather than `->change()`: the column carries a foreign key and Laravel's change
-        // path drops and rebuilds it. MODIFY leaves the key alone and only relaxes the null
-        // constraint, which is the whole of what is wanted here.
-        DB::statement('ALTER TABLE `project_members` MODIFY `user_id` BIGINT UNSIGNED NULL');
+        $this->setUserIdNullable(true);
     }
 
     public function down(): void
@@ -50,12 +47,47 @@ return new class extends Migration
         // are invitations rather than memberships, and the invitation row itself still holds
         // everything about them.
         DB::table('project_members')->whereNull('user_id')->delete();
-        DB::statement('ALTER TABLE `project_members` MODIFY `user_id` BIGINT UNSIGNED NOT NULL');
+        $this->setUserIdNullable(false);
 
         Schema::table('project_members', function (Blueprint $table) {
             $table->dropUnique('project_members_project_email_unique');
             $table->dropConstrainedForeignId('workspace_invitation_id');
             $table->dropColumn(['email', 'invited_role', 'invited_at']);
+        });
+    }
+
+    /**
+     * Relax (or restore) the NOT NULL on `project_members.user_id`.
+     *
+     * MySQL gets `MODIFY`, which leaves the column's foreign key alone — Laravel's `->change()`
+     * drops and rebuilds the key, and rebuilding it is exactly what is not wanted here.
+     *
+     * Everything else gets the schema builder. This USED to be a bare
+     * `DB::statement('ALTER TABLE ... MODIFY ...')`, which is MySQL-only syntax: on SQLite it
+     * throws `near "MODIFY": syntax error`, and because the test suite runs on an in-memory
+     * SQLite database, that one line failed every migration and therefore every test in the
+     * project — 142 of them, all with the same error and none of them about their own subject.
+     * CLAUDE.md §6 asks for portable migrations for this reason.
+     */
+    private function setUserIdNullable(bool $nullable): void
+    {
+        if (DB::getDriverName() === 'mysql' || DB::getDriverName() === 'mariadb') {
+            DB::statement(sprintf(
+                'ALTER TABLE `project_members` MODIFY `user_id` BIGINT UNSIGNED %s',
+                $nullable ? 'NULL' : 'NOT NULL',
+            ));
+
+            return;
+        }
+
+        Schema::table('project_members', function (Blueprint $table) use ($nullable) {
+            $column = $table->foreignId('user_id');
+
+            if ($nullable) {
+                $column->nullable();
+            }
+
+            $column->change();
         });
     }
 };

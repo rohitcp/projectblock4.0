@@ -42,18 +42,23 @@ class WorkItemReactions
             ->where('user_id', $userId)
             ->pluck('value', 'work_item_id');
 
-        $subscribed = WorkItemSubscriber::query()
+        // The LEVEL, not merely whether a row exists: watching is no longer a switch, and a
+        // boolean cannot tell "everything" from "mentions only" from "muted".
+        $watch = WorkItemSubscriber::query()
             ->whereIn('work_item_id', $ids)
             ->where('user_id', $userId)
-            ->pluck('work_item_id')
-            ->flip();
+            ->pluck('level', 'work_item_id');
 
         $out = [];
         foreach ($ids as $id) {
             $out[$id] = [
                 'votes' => ['up' => 0, 'down' => 0],
                 'my_vote' => $mine[$id] ?? null,
-                'subscribed' => $subscribed->has($id),
+                // `subscribed` is kept and still means "am I on this item at all", so every
+                // existing reader of it — the toolbar's filled/hollow bell — is unchanged.
+                'subscribed' => $watch->has($id),
+                // Null when not watching: the control needs to tell "no row" from `all`.
+                'watch_level' => $watch[$id] ?? null,
             ];
         }
 

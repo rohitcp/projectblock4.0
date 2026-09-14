@@ -81,24 +81,60 @@ class WorkItemReactionController extends Controller
     }
 
     /** POST /projects/{project}/work-items/{workItem}/subscribe — on, or back off. */
-    public function subscribe(Project $project, WorkItem $workItem): JsonResponse
+    public function subscribe(Request $request, Project $project, WorkItem $workItem): JsonResponse
     {
         $this->guard($project, $workItem);
+
+        /*
+         * Two shapes, on purpose.
+         *
+         * With no `level` this is the toggle it always was — press once to watch, again to
+         * stop — which is what the bell in the toolbar still sends. With a `level` it SETS
+         * that level, which is what the three-option menu sends. Keeping the toggle means the
+         * older control did not have to change to keep working.
+         */
+        $data = $request->validate([
+            'level' => ['nullable', Rule::in(WorkItemSubscriber::LEVELS)],
+        ]);
 
         $existing = WorkItemSubscriber::query()
             ->where('work_item_id', $workItem->id)
             ->where('user_id', Auth::id())
             ->first();
 
+        $level = $data['level'] ?? null;
+
+        if ($level === null) {
+            if ($existing) {
+                $existing->delete();
+            } else {
+                WorkItemSubscriber::create([
+                    'work_item_id' => $workItem->id, 'user_id' => Auth::id(),
+                    'level' => WorkItemSubscriber::LEVEL_ALL,
+                ]);
+            }
+
+            return response()->json([
+                'ok' => true,
+                'message' => $existing ? 'Unsubscribed.' : 'Subscribed. You will hear about changes to this work item.',
+            ] + $this->state($workItem));
+        }
+
         if ($existing) {
-            $existing->delete();
+            $existing->forceFill(['level' => $level])->save();
         } else {
-            WorkItemSubscriber::create(['work_item_id' => $workItem->id, 'user_id' => Auth::id()]);
+            WorkItemSubscriber::create([
+                'work_item_id' => $workItem->id, 'user_id' => Auth::id(), 'level' => $level,
+            ]);
         }
 
         return response()->json([
             'ok' => true,
-            'message' => $existing ? 'Unsubscribed.' : 'Subscribed. You will hear about changes to this work item.',
+            'message' => match ($level) {
+                WorkItemSubscriber::LEVEL_ALL => 'Watching all activity on this work item.',
+                WorkItemSubscriber::LEVEL_MENTIONS => 'You’ll only hear about mentions and replies.',
+                default => 'Muted. You won’t be notified about this work item.',
+            },
         ] + $this->state($workItem));
     }
 

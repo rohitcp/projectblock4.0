@@ -70,6 +70,7 @@ class WorkItemStatusNotifier
                 'project' => $project->id,
                 'workItem' => $item->id,
             ]),
+            actor: \App\Mail\EmailActor::fromUser($actor, 'Someone'),
         );
 
         $emails = $recipients->pluck('email')->all();

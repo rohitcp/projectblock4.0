@@ -42,6 +42,8 @@ class WorkspaceInvitationMail extends Mailable implements ShouldQueue
         public readonly ?string $contextLine = null,
         public readonly ?string $contextLabel = null,
         public readonly ?string $contextValue = null,
+        /** Who sent it — their photo, or their initials (§16). Null keeps the old plain-name look. */
+        public readonly ?EmailActor $actor = null,
     ) {}
 
     public function envelope(): Envelope

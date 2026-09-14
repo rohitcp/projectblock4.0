@@ -1,67 +1,22 @@
-<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
-<body style="margin:0;background:#f3f4f6;font-family:Inter,Arial,sans-serif;color:#23272f;">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f3f4f6;padding:32px 0;">
-    <tr><td align="center">
-      <table role="presentation" width="520" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;border:1px solid #e5e7eb;overflow:hidden;">
-        <tr><td style="padding:28px 32px 4px;">
-          <div style="font-size:18px;font-weight:700;color:#0f0f10;">Project Block</div>
-        </td></tr>
+{{-- Work item moved between states — a narrower case of "updated", kept separate because the
+     subject and the one fact it carries are different. --}}
+<x-email.layout preheader="{{ $actorName }} moved {{ $identifier }} to {{ $toState ?? 'a new state' }}.">
 
-        <tr><td style="padding:16px 32px 0;">
-          <div style="font-size:12px;color:#6b7280;letter-spacing:.04em;">{{ $identifier }}</div>
-          <h1 style="font-size:20px;font-weight:700;color:#0f0f10;margin:4px 0 12px;">{{ $title }}</h1>
-          <p style="font-size:14px;color:#6b7280;margin:0 0 20px;">
-            <strong style="color:#23272f;">{{ $actorName }}</strong> changed the status of this work item in
-            <strong style="color:#23272f;">{{ $projectName }}</strong>.
-          </p>
-        </td></tr>
+  <x-email.icon name="assigned" />
 
-        {{-- From → To, because "moved to Done" is only half the story: what it moved OUT of is
-             what tells a subscriber whether this is progress or a reopening. --}}
-        <tr><td style="padding:0 32px;">
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f8f9fa;border:1px solid #e5e7eb;border-radius:10px;">
-            <tr><td style="padding:12px 16px 4px;font-size:13px;font-weight:600;color:#23272f;">Status</td></tr>
-            <tr>
-              <td style="padding:4px 16px 14px;">
-                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px solid #e5e7eb;border-radius:8px;">
-                  <tr>
-                    <td style="padding:12px 14px;font-size:13px;color:#6b7280;">Was</td>
-                    <td style="padding:12px 14px;font-size:13px;color:#23272f;" align="right">{{ $fromState ?? 'No status' }}</td>
-                  </tr>
-                  <tr>
-                    <td style="padding:12px 14px;font-size:13px;color:#6b7280;border-top:1px solid #f1f2f4;">Now</td>
-                    <td style="padding:12px 14px;font-size:13px;color:#23272f;font-weight:600;border-top:1px solid #f1f2f4;" align="right">{{ $toState ?? 'No status' }}</td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-          </table>
-        </td></tr>
+  <x-email.heading>A work item changed status</x-email.heading>
+  <x-email.text>{{ $actorName }} moved this in {{ $projectName }}.</x-email.text>
 
-        <tr><td style="padding:20px 32px 4px;">
-          <a href="{{ $url }}"
-             style="display:inline-block;background:#1b5f8a;color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;padding:11px 22px;border-radius:8px;">
-            View work item
-          </a>
-        </td></tr>
+  @if (!empty($actor))
+    <x-email.actor :name="$actor->name" :url="$actor->avatarUrl" :initial="$actor->initial" :id="$actor->id" line="changed the status" />
+  @endif
 
-        <tr><td style="padding:18px 32px 8px;">
-          <p style="font-size:12px;color:#9ca3af;margin:0;word-break:break-all;">{{ $url }}</p>
-        </td></tr>
+  <x-email.card :eyebrow="$identifier" :title="$title">
+    <x-email.row label="Project" :value="$projectName" />
+    <x-email.row label="Status" :value="trim(($fromState ?? 'No state').' → '.($toState ?? 'No state'))" />
+    <x-email.row label="Changed by" :value="$actorName" />
+  </x-email.card>
 
-        {{-- Why they got this, and how to stop — an alert nobody can turn off is one people
-             filter to a folder, which is the same as turning it off but worse. --}}
-        <tr><td style="padding:0 32px 28px;">
-          <p style="font-size:12px;color:#9ca3af;margin:0;">
-            You are receiving this because you subscribed to this work item. Open it and choose
-            Unsubscribe to stop.
-          </p>
-        </td></tr>
-      </table>
-      <p style="font-size:12px;color:#9ca3af;margin:16px 0 0;">&copy; {{ date('Y') }} Project Block</p>
-    </td></tr>
-  </table>
-</body>
-</html>
+  <x-email.button :url="$url">View Work Item</x-email.button>
+  <x-email.fallback-link :url="$url" />
+</x-email.layout>

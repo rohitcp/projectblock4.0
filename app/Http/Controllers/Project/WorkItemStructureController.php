@@ -214,7 +214,7 @@ class WorkItemStructureController extends Controller
     /** POST /projects/{project}/work-items/{workItem}/subtasks — attach existing items (§22). */
     public function storeSubtasks(Request $request, Project $project, WorkItem $workItem): JsonResponse
     {
-        $this->guard($project, $workItem, 'update');
+        $this->guard($project, $workItem, 'manageStructure');
         $ids = $this->itemIds($request);
 
         $added = $this->relations->addSubtasks($workItem, Auth::user(), $ids);
@@ -226,7 +226,7 @@ class WorkItemStructureController extends Controller
     /** DELETE /projects/{project}/work-items/{workItem}/subtasks/{child} (§26). */
     public function destroySubtask(Project $project, WorkItem $workItem, WorkItem $child): JsonResponse
     {
-        $this->guard($project, $workItem, 'update');
+        $this->guard($project, $workItem, 'manageStructure');
         abort_unless(Auth::user()->can('update', $child), 403);
 
         $this->relations->removeSubtask($workItem, $child, Auth::user());
@@ -237,7 +237,7 @@ class WorkItemStructureController extends Controller
     /** POST /projects/{project}/work-items/{workItem}/relations (§30/§34). */
     public function storeRelations(Request $request, Project $project, WorkItem $workItem): JsonResponse
     {
-        $this->guard($project, $workItem, 'update');
+        $this->guard($project, $workItem, 'manageStructure');
         $ids = $this->itemIds($request);
 
         $added = $this->relations->addRelations(
@@ -252,7 +252,7 @@ class WorkItemStructureController extends Controller
     /** DELETE /projects/{project}/work-items/{workItem}/relations/{relation} (§32). */
     public function destroyRelation(Project $project, WorkItem $workItem, WorkItemRelation $relation): JsonResponse
     {
-        $this->guard($project, $workItem, 'update');
+        $this->guard($project, $workItem, 'manageStructure');
 
         // The relation must actually touch this work item — otherwise a valid relation id
         // from elsewhere in the workspace could be deleted through this item's URL.
@@ -280,8 +280,41 @@ class WorkItemStructureController extends Controller
      */
     public function storeLabel(Request $request, Project $project, WorkItem $workItem): JsonResponse
     {
-        $this->guard($project, $workItem, 'update');
+        $this->guard($project, $workItem, 'manageLabels');
 
+        return $this->createLabel($request, $project);
+    }
+
+    /**
+     * POST /projects/{project}/work-item-labels — the same thing, for an item that does not
+     * exist yet.
+     *
+     * The Create Work Item form has the same label picker as the grid and the drawer, and had
+     * the same dead end: a project with no labels offered nothing but "No labels yet", so the
+     * first label on a project could only be made from Project Settings — and only by an
+     * admin. The picker above cannot serve this, because its route needs a work item id and
+     * on this screen there is not one yet.
+     *
+     * Gated on the WORK ITEM create ability for this project: whoever is allowed to open the
+     * form is allowed to label what they are filling in. That is the same reasoning as the
+     * sibling above, one step earlier.
+     */
+    public function storeProjectLabel(Request $request, Project $project): JsonResponse
+    {
+        abort_unless(Auth::user()->can('create', [WorkItem::class, $project]), 403);
+
+        return $this->createLabel($request, $project);
+    }
+
+    /**
+     * Find-or-create one label and hand back the project's refreshed vocabulary.
+     *
+     * Shared by both routes above rather than written twice: they differ only in who is
+     * allowed to call them, and a second copy is a second place for the duplicate rule below
+     * to drift.
+     */
+    private function createLabel(Request $request, Project $project): JsonResponse
+    {
         $data = $request->validate([
             'name' => ['required', 'string', 'max:60'],
             'color' => ['nullable', 'string', 'regex:/^#[0-9A-Fa-f]{6}$/'],
@@ -330,7 +363,7 @@ class WorkItemStructureController extends Controller
     /** POST /projects/{project}/work-items/{workItem}/links (§38). */
     public function storeLink(StoreWorkItemLinkRequest $request, Project $project, WorkItem $workItem): JsonResponse
     {
-        $this->guard($project, $workItem, 'update');
+        $this->guard($project, $workItem, 'manageStructure');
 
         $this->links->create($workItem, Auth::user(), $request->validated('url'), $request->validated('title'));
 
@@ -340,7 +373,7 @@ class WorkItemStructureController extends Controller
     /** PATCH /projects/{project}/work-items/{workItem}/links/{link} (§41). */
     public function updateLink(StoreWorkItemLinkRequest $request, Project $project, WorkItem $workItem, WorkItemLink $link): JsonResponse
     {
-        $this->guard($project, $workItem, 'update');
+        $this->guard($project, $workItem, 'manageStructure');
         abort_unless((int) $link->work_item_id === (int) $workItem->id, 404);
 
         $this->links->update($link, Auth::user(), $request->validated('url'), $request->validated('title'));
@@ -351,7 +384,7 @@ class WorkItemStructureController extends Controller
     /** DELETE /projects/{project}/work-items/{workItem}/links/{link} (§41). */
     public function destroyLink(Project $project, WorkItem $workItem, WorkItemLink $link): JsonResponse
     {
-        $this->guard($project, $workItem, 'update');
+        $this->guard($project, $workItem, 'manageStructure');
         abort_unless((int) $link->work_item_id === (int) $workItem->id, 404);
 
         $this->links->delete($link, Auth::user());
@@ -456,7 +489,7 @@ class WorkItemStructureController extends Controller
     /** POST /projects/{project}/work-items/{workItem}/pages — link one or more. */
     public function storePages(Request $request, Project $project, WorkItem $workItem): JsonResponse
     {
-        $this->guard($project, $workItem, 'update');
+        $this->guard($project, $workItem, 'manageStructure');
         abort_unless($project->featureEnabled('pages'), 403, 'Pages are disabled for this project.');
 
         $ids = $request->validate([
@@ -480,7 +513,8 @@ class WorkItemStructureController extends Controller
     /** DELETE /projects/{project}/work-items/{workItem}/pages/{page} — unlink, never delete. */
     public function destroyPage(Project $project, WorkItem $workItem, ProjectPage $page): JsonResponse
     {
-        $this->guard($project, $workItem, 'update');
+        // Unlinking is the mirror of linking, so it takes the same ability.
+        $this->guard($project, $workItem, 'manageStructure');
 
         // Only the link goes. The page is documentation in its own right.
         $workItem->pages()->detach($page->id);

@@ -5,9 +5,14 @@
 
    The read rule is the one worth reading the code for (§6). A row is marked read only AFTER
    its detail has loaded — never on the click — so a failed fetch cannot silently consume a
-   notification. And a read row STAYS in the list, greyed, until you select another one or
-   leave; a list that deletes the row you just clicked, out from under the cursor, makes people
-   distrust the whole panel.
+   notification. That half is load-bearing and unchanged.
+
+   What changed: a row now LEAVES the list once it has been read, rather than staying greyed.
+   The Inbox is a queue of things still needing attention, and a dealt-with row sitting in it
+   makes the count and the list disagree about what is left. The earlier worry — that removing
+   the row you just clicked pulls it out from under the cursor — is answered by the ordering
+   above: it goes only after its detail is on screen, so what you clicked is what you are
+   already looking at, and the pane it opened stays put.
    ------------------------------------------------------------------ */
 PB.boot('inbox', {
   props: { bootstrap: Object },
@@ -169,9 +174,23 @@ PB.boot('inbox', {
       try {
         var resp = await this.$pb.api(this.$pb.withId(this.urls.read, id), { method: 'POST' });
         this.counts = resp.counts || this.counts;
-        // Kept on screen, marked dealt with — see the note at the top of this file.
         if (this.readNow.indexOf(id) === -1) this.readNow.push(id);
-      } catch (e) { /* still unread; the next load will show it again */ }
+        // Off the list, now that it is read and its detail is on screen.
+        this.dropRow(id);
+      } catch (e) { /* still unread, still listed; the next load will show it again */ }
+    },
+
+    /**
+     * Take one row out of the list once it has been dealt with.
+     *
+     * `selected` is deliberately left pointing at it. The detail pane reads that id, and
+     * clearing it here would blank the very thing the click just opened — the row goes, what
+     * it opened stays.
+     */
+    dropRow: function (id) {
+      for (var i = 0; i < this.items.length; i++) {
+        if (this.items[i].id === id) { this.items.splice(i, 1); break; }
+      }
     },
 
     onDetailError: function () {

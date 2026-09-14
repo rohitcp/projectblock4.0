@@ -26,6 +26,7 @@
   @include('partials.lexical-editor')
 
   <script defer src="{{ pb_asset('assets/js/wiki-page.js') }}"></script>
+  @include('partials.image-zoom')
 </head>
 <body class="bg-white text-ink h-screen flex flex-col overflow-hidden text-[13px]">
 
